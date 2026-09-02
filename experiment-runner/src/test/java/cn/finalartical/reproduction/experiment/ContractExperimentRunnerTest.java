@@ -21,7 +21,7 @@ public class ContractExperimentRunnerTest {
         assertEquals(20, report.getTotal());
         assertEquals(20, report.getPassed());
         assertEquals(0, report.getFailed());
-        assertTrue(report.toJson().contains("REPRODUCED_SYSTEM_RUN"));
+        assertTrue(report.toJson().contains(ExperimentRunReport.DATA_IDENTITY));
     }
 
     @Test

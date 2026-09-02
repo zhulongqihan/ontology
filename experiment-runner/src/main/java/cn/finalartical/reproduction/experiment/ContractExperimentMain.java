@@ -19,7 +19,7 @@ public final class ContractExperimentMain {
         ExperimentRunReport report = runner.runFromCsv(cases, seed);
         runner.writeArtifacts(report, output);
         System.out.println("experiment=" + "contract-20");
-        System.out.println("data_identity=REPRODUCED_SYSTEM_RUN");
+        System.out.println("data_identity=" + ExperimentRunReport.DATA_IDENTITY);
         System.out.println("total=" + report.getTotal());
         System.out.println("passed=" + report.getPassed());
         System.out.println("failed=" + report.getFailed());

@@ -5,6 +5,8 @@ import java.util.Collections;
 import java.util.List;
 
 public final class ExperimentRunReport {
+    public static final String DATA_IDENTITY = "ENGINE_EXPERIMENT_RESULT";
+
     private final String experimentId;
     private final long seed;
     private final List<ContractExecution> executions;
@@ -50,7 +52,7 @@ public final class ExperimentRunReport {
         builder.append("{\"experiment_id\":\"").append(experimentId)
                 .append("\",\"run_id\":\"").append(getRunId())
                 .append("\",\"seed\":").append(seed)
-                .append(",\"data_identity\":\"REPRODUCED_SYSTEM_RUN\"")
+                .append(",\"data_identity\":\"").append(DATA_IDENTITY).append("\"")
                 .append(",\"total\":").append(getTotal())
                 .append(",\"passed\":").append(getPassed())
                 .append(",\"failed\":").append(getFailed())

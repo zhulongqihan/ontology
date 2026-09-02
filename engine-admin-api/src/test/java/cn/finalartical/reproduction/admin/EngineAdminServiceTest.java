@@ -129,4 +129,26 @@ public class EngineAdminServiceTest {
         assertEquals(2, service.ontologyTypes().get(1).getRelations().size());
         assertEquals(3, service.services().size());
     }
+
+    @Test
+    public void legacyProductIdentityIsMigratedOnLoad() throws Exception {
+        Path path = Files.createTempDirectory("engine-admin").resolve("state.json");
+        JsonEngineStateRepository repository = new JsonEngineStateRepository(path);
+        EngineState legacy = DefaultEngineSeed.create();
+        legacy.setEngineId("flexible-engine-reproduction");
+        legacy.setEngineName("柔性引擎复现实例");
+        legacy.setEngineVersion("0.2.0");
+        RuntimeRun oldRun = new RuntimeRun();
+        oldRun.setDataIdentity("REPRODUCED_SYSTEM_RUN");
+        legacy.getRuns().add(oldRun);
+        repository.save(legacy);
+
+        EngineAdminService service = new EngineAdminService(repository);
+        Map<String, Object> engine = (Map<String, Object>) service.overview().get("engine");
+
+        assertEquals("flexible-engine-ontology", engine.get("id"));
+        assertEquals("柔性引擎与本体化平台", engine.get("name"));
+        assertEquals("0.3.0", engine.get("version"));
+        assertEquals("ENGINE_RUNTIME_RESULT", service.runs().get(0).getDataIdentity());
+    }
 }

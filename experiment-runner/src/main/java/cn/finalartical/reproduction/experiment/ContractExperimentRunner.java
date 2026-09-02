@@ -46,7 +46,7 @@ public final class ContractExperimentRunner {
                 + "\"experiment_id\":\"contract-20\","
                 + "\"run_id\":" + quote(report.getRunId()) + ","
                 + "\"seed\":" + report.getSeed() + ","
-                + "\"data_identity\":\"REPRODUCED_SYSTEM_RUN\","
+                + "\"data_identity\":" + quote(ExperimentRunReport.DATA_IDENTITY) + ","
                 + "\"source_revision\":" + quote(System.getProperty("reproduction.source.revision", "UNKNOWN")) + ","
                 + "\"java_version\":" + quote(System.getProperty("java.version")) + ","
                 + "\"os\":" + quote(System.getProperty("os.name") + " " + System.getProperty("os.version"))
@@ -112,7 +112,7 @@ public final class ContractExperimentRunner {
                 + "}";
         return new ContractExecution(contractCase.getCaseId(), capability, scenario,
                 contractCase.getRequestShape(), contractCase.getExpectedBehavior(), rawStatus,
-                actualBehavior, traceId, passed, "REPRODUCED_SYSTEM_RUN",
+                actualBehavior, traceId, passed, ExperimentRunReport.DATA_IDENTITY,
                 requestJson, responseJson, traceJson);
     }
 

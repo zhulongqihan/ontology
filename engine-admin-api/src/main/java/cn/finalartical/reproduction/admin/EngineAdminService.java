@@ -16,7 +16,14 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class EngineAdminService {
-    public static final String DATA_IDENTITY = "REPRODUCED_SYSTEM_RUN";
+    public static final String DATA_IDENTITY = "ENGINE_RUNTIME_RESULT";
+    private static final String LEGACY_DATA_IDENTITY = "REPRODUCED_SYSTEM_RUN";
+    private static final String LEGACY_ENGINE_ID = "flexible-engine-reproduction";
+    private static final String LEGACY_ENGINE_NAME = "柔性引擎复现实例";
+    private static final String LEGACY_ENGINE_VERSION = "0.2.0";
+    private static final String ENGINE_ID = "flexible-engine-ontology";
+    private static final String ENGINE_NAME = "柔性引擎与本体化平台";
+    private static final String ENGINE_VERSION = "0.3.0";
 
     private final EngineStateRepository repository;
     private final EngineState state;
@@ -27,6 +34,33 @@ public final class EngineAdminService {
         }
         this.repository = repository;
         this.state = repository.load();
+        migrateProductIdentity();
+    }
+
+    private void migrateProductIdentity() {
+        boolean changed = false;
+        if (LEGACY_ENGINE_ID.equals(state.getEngineId())) {
+            state.setEngineId(ENGINE_ID);
+            changed = true;
+        }
+        if (LEGACY_ENGINE_NAME.equals(state.getEngineName())) {
+            state.setEngineName(ENGINE_NAME);
+            changed = true;
+        }
+        if (LEGACY_ENGINE_VERSION.equals(state.getEngineVersion())) {
+            state.setEngineVersion(ENGINE_VERSION);
+            changed = true;
+        }
+        for (RuntimeRun run : state.getRuns()) {
+            if (LEGACY_DATA_IDENTITY.equals(run.getDataIdentity())) {
+                run.setDataIdentity(DATA_IDENTITY);
+                changed = true;
+            }
+        }
+        if (changed) {
+            state.setUpdatedAt(Instant.now().toString());
+            repository.save(state);
+        }
     }
 
     public synchronized Map<String, Object> overview() {

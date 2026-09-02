@@ -8,15 +8,15 @@ public final class DefaultEngineSeed {
 
     public static EngineState create() {
         EngineState state = new EngineState();
-        state.setEngineId("flexible-engine-reproduction");
-        state.setEngineName("柔性引擎复现实例");
-        state.setEngineVersion("0.2.0");
+        state.setEngineId("flexible-engine-ontology");
+        state.setEngineName("柔性引擎与本体化平台");
+        state.setEngineVersion("0.3.0");
         state.setUpdatedAt("2026-09-02T00:00:00Z");
 
         EngineModel interview = new EngineModel(
                 "interview-session",
                 "面试会话",
-                "用于复现动态字段、评价流程和上下文状态的柔性对象模型。",
+                "用于演示动态字段、评价流程和上下文状态的柔性对象模型。",
                 2,
                 "PENDING_INTERVIEW");
         interview.getFields().add(new EngineField("candidateName", "STRING", true, 1, null));

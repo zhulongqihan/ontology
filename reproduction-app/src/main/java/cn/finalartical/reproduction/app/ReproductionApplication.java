@@ -63,7 +63,7 @@ public final class ReproductionApplication {
                 new QuestionnaireServiceProvider(repository, new OntologyAssembler()));
         OperationResult<?> detail = service.questionnaireDetail("q-001", "trace-demo");
 
-        System.out.println("REPRODUCED_SYSTEM_RUN");
+        System.out.println(cn.finalartical.reproduction.admin.EngineAdminService.DATA_IDENTITY);
         System.out.println("workflow.state=" + engine.state());
         System.out.println("workflow.validationErrors=" + engine.validate());
         System.out.println("context.sha256=" + snapshot.getSha256());
@@ -115,7 +115,7 @@ public final class ReproductionApplication {
             ExperimentRunReport report = runner.runFromCsv(cases, seed);
             runner.writeArtifacts(report, output);
             System.out.println("experiment=contract-20");
-            System.out.println("data_identity=REPRODUCED_SYSTEM_RUN");
+            System.out.println("data_identity=" + ExperimentRunReport.DATA_IDENTITY);
             System.out.println("total=" + report.getTotal());
             System.out.println("passed=" + report.getPassed());
             System.out.println("failed=" + report.getFailed());
