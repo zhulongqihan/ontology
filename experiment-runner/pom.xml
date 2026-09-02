@@ -13,6 +13,11 @@
     <dependencies>
         <dependency>
             <groupId>cn.finalartical</groupId>
+            <artifactId>flexible-engine-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.finalartical</groupId>
             <artifactId>compatibility-adapter</artifactId>
             <version>${project.version}</version>
         </dependency>

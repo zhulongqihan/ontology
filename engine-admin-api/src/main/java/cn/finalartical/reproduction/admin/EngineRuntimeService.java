@@ -8,7 +8,6 @@ import cn.finalartical.reproduction.flexible.FlexibleEngine;
 import cn.finalartical.reproduction.flexible.UnknownFieldPolicy;
 import cn.finalartical.reproduction.flexible.WorkflowDefinition;
 import cn.finalartical.reproduction.flexible.WorkflowTransition;
-import cn.finalartical.reproduction.ontology.OntologyGraphValidator;
 import cn.finalartical.reproduction.ontology.OntologyRelationDefinition;
 import cn.finalartical.reproduction.ontology.OntologyTypeDefinition;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +25,7 @@ import java.util.UUID;
 final class EngineRuntimeService {
     private final EngineStateRepository repository;
     private final EngineState state;
+    private final OntologyProvider ontologyProvider;
     private final ObjectMapper mapper = new ObjectMapper();
 
     EngineRuntimeService(EngineStateRepository repository, EngineState state) {
@@ -34,6 +34,7 @@ final class EngineRuntimeService {
         }
         this.repository = repository;
         this.state = state;
+        this.ontologyProvider = new LocalOntologyProvider();
     }
 
     synchronized RuntimeRun execute(Map<String, Object> payload) {
@@ -142,17 +143,73 @@ final class EngineRuntimeService {
                 mapOf("event", event, "fromState", fromState, "toState", errors.isEmpty() ? nextState : fromState));
 
         Map<String, Object> ontologyGraph = new LinkedHashMap<String, Object>();
+        boolean ontologyRequested = (payload != null && payload.get("ontology") != null)
+                || engine.values().get("subjects") instanceof List;
         long ontologyStarted = System.nanoTime();
         if (errors.isEmpty()) {
             try {
-                ontologyGraph = assembleOntology(modelId, contextId, engine.values(), payload == null ? null : payload.get("ontology"));
+                if (ontologyRequested) {
+                    if ("unknown".equals(ontologyTypeIdOrUnknown(modelId))) {
+                        throw new IllegalArgumentException("ontology type not found: " + modelId);
+                    }
+                }
             } catch (IllegalArgumentException exception) {
                 errors.add(exception.getMessage());
                 errorCode = "ONTOLOGY_ASSEMBLY_ERROR";
             }
         }
         addSpan(spans, traceId, "ontology", ontologyStarted, errors.isEmpty() ? "OK" : "FAILED",
-                mapOf("objectCount", String.valueOf(objectCount(ontologyGraph))));
+                mapOf("requested", String.valueOf(ontologyRequested),
+                        "rootType", ontologyRequested ? ontologyTypeIdOrUnknown(modelId) : "none"));
+
+        long providerStarted = System.nanoTime();
+        Instant providerStartedAt = Instant.now();
+        String providerStatus = "SKIPPED";
+        String providerError = null;
+        ServiceRegistration provider = service("ontology-assembler");
+        Map<String, Object> providerRequest = new LinkedHashMap<String, Object>();
+        providerRequest.put("serviceId", "ontology-assembler");
+        providerRequest.put("operation", "assembleOntology");
+        providerRequest.put("modelId", modelId);
+        providerRequest.put("contextId", contextId);
+        providerRequest.put("values", engine.values());
+        providerRequest.put("ontology", payload == null ? null : payload.get("ontology"));
+        if (!ontologyRequested) {
+            providerError = "ontology input not requested";
+        } else if (!errors.isEmpty()) {
+            providerError = "previous stage failed";
+        } else {
+            try {
+                ontologyGraph = invokeOntologyProvider(provider, modelId, contextId, engine.values(),
+                        payload == null ? null : payload.get("ontology"));
+                providerStatus = "OK";
+            } catch (IllegalArgumentException exception) {
+                errors.add(exception.getMessage());
+                errorCode = "ONTOLOGY_ASSEMBLY_ERROR";
+                providerStatus = "FAILED";
+                providerError = exception.getMessage();
+            }
+        }
+        long providerEnded = System.nanoTime();
+        Instant providerEndedAt = Instant.now();
+        Map<String, String> providerAttributes = mapOf(
+                "serviceId", "ontology-assembler",
+                "operation", "assembleOntology",
+                "transport", "IN_PROCESS",
+                "requestJson", json(providerRequest),
+                "responseJson", providerStatus.equals("OK") ? json(ontologyGraph) : "null",
+                "objectCount", String.valueOf(objectCount(ontologyGraph)));
+        if (provider != null) {
+            providerAttributes.put("endpoint", provider.getEndpoint());
+            providerAttributes.put("provider", provider.getProvider());
+            providerAttributes.put("version", provider.getVersion());
+        }
+        if (providerError != null) {
+            providerAttributes.put("SKIPPED".equals(providerStatus) ? "skipReason" : "error", providerError);
+        }
+        providerAttributes.put("durationNs", String.valueOf(Math.max(0L, providerEnded - providerStarted)));
+        addSpan(spans, traceId, "provider", providerStarted, providerStartedAt, providerEnded,
+                providerEndedAt, providerStatus, providerAttributes);
 
         boolean passed = errors.isEmpty();
         String status = passed ? "PASSED" : "FAILED";
@@ -386,6 +443,39 @@ final class EngineRuntimeService {
         }
     }
 
+    private Map<String, Object> invokeOntologyProvider(ServiceRegistration provider, String modelId,
+                                                       String contextId, Map<String, Object> values, Object input) {
+        if (provider == null) {
+            throw new IllegalArgumentException("ontology-assembler provider is not registered");
+        }
+        if (!"READY".equalsIgnoreCase(provider.getStatus())) {
+            throw new IllegalArgumentException("ontology-assembler provider is not ready: " + provider.getStatus());
+        }
+        if (!"LocalOntologyProvider".equals(provider.getProvider())) {
+            throw new IllegalArgumentException("ontology-assembler provider implementation is not available in-process: "
+                    + provider.getProvider());
+        }
+        return ontologyProvider.assemble(modelId, contextId, values, input, ontologyDefinitions());
+    }
+
+    private ServiceRegistration service(String serviceId) {
+        for (ServiceRegistration candidate : state.getServices()) {
+            if (serviceId.equals(candidate.getId())) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private String ontologyTypeIdOrUnknown(String modelId) {
+        for (OntologyTypeConfig type : state.getOntologyTypes()) {
+            if (modelId.equals(type.getId()) || (type.getLabel() != null && modelId.equalsIgnoreCase(type.getLabel()))) {
+                return type.getId();
+            }
+        }
+        return "unknown";
+    }
+
     private EngineModel model(String modelId) {
         for (EngineModel model : state.getModels()) {
             if (modelId.equals(model.getId())) {
@@ -536,76 +626,27 @@ final class EngineRuntimeService {
 
     private void addSpan(List<TraceSpanRecord> spans, String traceId, String name, long startedAt,
                          String status, Map<String, String> attributes) {
-        String now = Instant.now().toString();
-        spans.add(new TraceSpanRecord("span-" + UUID.randomUUID().toString().substring(0, 8), traceId, name,
-                now, now, Math.max(0L, (System.nanoTime() - startedAt) / 1000000L), status, attributes));
+        long endedAt = System.nanoTime();
+        long elapsedNanos = Math.max(0L, endedAt - startedAt);
+        Instant endedAtIso = Instant.now();
+        Instant startedAtIso = endedAtIso.minusNanos(elapsedNanos);
+        addSpan(spans, traceId, name, startedAt, startedAtIso, endedAt, endedAtIso, status, attributes);
     }
 
-    private Map<String, Object> assembleOntology(String modelId, String contextId, Map<String, Object> values, Object input) {
-        if (input == null && !(values.get("subjects") instanceof List)) {
-            return new LinkedHashMap<String, Object>();
+    private void addSpan(List<TraceSpanRecord> spans, String traceId, String name, long startedAt,
+                         Instant startedAtIso, long endedAt, Instant endedAtIso, String status,
+                         Map<String, String> attributes) {
+        spans.add(new TraceSpanRecord("span-" + UUID.randomUUID().toString().substring(0, 8), traceId, name,
+                startedAtIso.toString(), endedAtIso.toString(), Math.max(0L, (endedAt - startedAt) / 1000000L),
+                status, attributes));
+    }
+
+    private String json(Object value) {
+        try {
+            return mapper.writeValueAsString(value);
+        } catch (IOException exception) {
+            throw new IllegalStateException("cannot serialize provider evidence", exception);
         }
-        Map<String, Object> graph = new LinkedHashMap<String, Object>();
-        List<Map<String, Object>> objects = new ArrayList<Map<String, Object>>();
-        List<Map<String, Object>> relations = new ArrayList<Map<String, Object>>();
-        Map<String, Object> rootAttributes = new LinkedHashMap<String, Object>(values);
-        Map<String, Object> root = new LinkedHashMap<String, Object>();
-        root.put("id", contextId);
-        root.put("type", ontologyTypeId(modelId));
-        root.put("attributes", rootAttributes);
-        objects.add(root);
-        Object subjects = values.get("subjects");
-        if (subjects instanceof List) {
-            rootAttributes.put("subjectCount", ((List<?>) subjects).size());
-            for (Object subjectItem : (List<?>) subjects) {
-                if (!(subjectItem instanceof Map)) {
-                    throw new IllegalArgumentException("ontology subjects must be objects");
-                }
-                Map<?, ?> source = (Map<?, ?>) subjectItem;
-                String subjectId = textValue(source.get("id"), "").trim();
-                String title = textValue(source.get("title"), "").trim();
-                if (subjectId.isEmpty() || title.isEmpty()) {
-                    throw new IllegalArgumentException("ontology subject id and title are required");
-                }
-                Map<String, Object> subject = new LinkedHashMap<String, Object>();
-                subject.put("id", subjectId);
-                subject.put("type", ontologyTypeId("subject"));
-                Map<String, Object> attributes = new LinkedHashMap<String, Object>();
-                attributes.put("title", title);
-                attributes.put("optionCount", optionsCount(source.get("options")));
-                subject.put("attributes", attributes);
-                objects.add(subject);
-                relations.add(edge(contextId, "containsSubject", subjectId));
-                rootAttributes.put("subject." + subjectId + ".title", title);
-                rootAttributes.put("subject." + subjectId + ".optionCount",
-                        optionsCount(source.get("options")));
-                Object options = source.get("options");
-                if (options instanceof List) {
-                    for (Object optionItem : (List<?>) options) {
-                        if (!(optionItem instanceof Map)) {
-                            throw new IllegalArgumentException("ontology options must be objects");
-                        }
-                        Map<?, ?> optionSource = (Map<?, ?>) optionItem;
-                        String optionId = textValue(optionSource.get("id"), "").trim();
-                        String label = textValue(optionSource.get("label"), "").trim();
-                        if (optionId.isEmpty() || label.isEmpty()) {
-                            throw new IllegalArgumentException("ontology option id and label are required");
-                        }
-                        Map<String, Object> option = new LinkedHashMap<String, Object>();
-                        option.put("id", optionId);
-                        option.put("type", ontologyTypeId("option"));
-                        option.put("attributes", Collections.singletonMap("label", label));
-                        objects.add(option);
-                        relations.add(edge(subjectId, "subjectContainsOption", optionId));
-                    }
-                }
-            }
-        }
-        graph.put("rootObjectId", contextId);
-        graph.put("objects", objects);
-        graph.put("relations", relations);
-        new OntologyGraphValidator().validate(graph, ontologyDefinitions());
-        return graph;
     }
 
     private List<OntologyTypeDefinition> ontologyDefinitions() {
@@ -620,27 +661,6 @@ final class EngineRuntimeService {
                     type.getDynamicAttributes(), relations));
         }
         return definitions;
-    }
-
-    private String ontologyTypeId(String requested) {
-        for (OntologyTypeConfig type : state.getOntologyTypes()) {
-            if (requested.equals(type.getId()) || requested.equalsIgnoreCase(type.getLabel())) {
-                return type.getId();
-            }
-        }
-        throw new IllegalArgumentException("ontology type not found: " + requested);
-    }
-
-    private Map<String, Object> edge(String sourceId, String relation, String targetId) {
-        Map<String, Object> edge = new LinkedHashMap<String, Object>();
-        edge.put("sourceId", sourceId);
-        edge.put("relation", relation);
-        edge.put("targetId", targetId);
-        return edge;
-    }
-
-    private int optionsCount(Object options) {
-        return options instanceof List ? ((List<?>) options).size() : 0;
     }
 
     private int objectCount(Map<String, Object> graph) {

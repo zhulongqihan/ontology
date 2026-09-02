@@ -51,8 +51,15 @@ public class ContractExperimentRunnerTest {
             assertTrue(Files.exists(output.resolve("C-01").resolve("response.json")));
             assertTrue(Files.exists(output.resolve("C-01").resolve("trace.json")));
             assertTrue(Files.exists(output.resolve("C-01").resolve("sha256.json")));
-            assertTrue(new String(Files.readAllBytes(output.resolve("C-01").resolve("trace.json")), StandardCharsets.UTF_8)
-                    .contains("trace-C-01"));
+            String trace = new String(Files.readAllBytes(output.resolve("C-01").resolve("trace.json")), StandardCharsets.UTF_8);
+            assertTrue(trace.contains("\"trace_id\":\"trace-C-01\""));
+            assertTrue(trace.contains("\"name\":\"provider\""));
+            assertTrue(trace.contains("\"duration_ms\":"));
+            assertTrue(trace.contains("\"duration_ns\":"));
+            assertTrue(trace.contains("\"request_json\":"));
+            assertTrue(trace.contains("\"response_json\":"));
+            String request = new String(Files.readAllBytes(output.resolve("C-01").resolve("request.json")), StandardCharsets.UTF_8);
+            assertTrue(request.contains("\"arguments\":{"));
         } finally {
             deleteRecursively(output);
         }

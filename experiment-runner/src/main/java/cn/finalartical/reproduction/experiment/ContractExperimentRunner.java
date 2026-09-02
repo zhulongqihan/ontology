@@ -5,6 +5,8 @@ import cn.finalartical.reproduction.compatibility.JsfExAssessService;
 import cn.finalartical.reproduction.compatibility.OperationResult;
 import cn.finalartical.reproduction.compatibility.OperationStatus;
 import cn.finalartical.reproduction.compatibility.QuestionnaireServiceProvider;
+import cn.finalartical.reproduction.flexible.Trace;
+import cn.finalartical.reproduction.flexible.TraceSpan;
 import cn.finalartical.reproduction.ontology.OntologyAssembler;
 import cn.finalartical.reproduction.ontology.Option;
 import cn.finalartical.reproduction.ontology.Questionnaire;
@@ -14,8 +16,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class ContractExperimentRunner {
     public ExperimentRunReport run(List<ContractCase> cases, long seed) {
@@ -71,31 +76,53 @@ public final class ContractExperimentRunner {
 
     private ContractExecution execute(ContractCase contractCase, JsfExAssessService service) {
         String traceId = "trace-" + contractCase.getCaseId();
+        Trace trace = new Trace("contract-" + contractCase.getCaseId(), traceId);
         OperationResult<?> result;
         String scenario = contractCase.getScenario();
         String capability = contractCase.getCapability();
+        String operation = capability;
+        String providerError = null;
+        long consumerStarted = System.nanoTime();
+        Instant consumerStartedAt = Instant.now();
+        long providerStarted = System.nanoTime();
+        Instant providerStartedAt = Instant.now();
 
-        if ("questionnaire-query".equals(capability) || "subject-questionnaire-query".equals(capability)) {
-            result = service.queryQuestionnaireIdsBySubjectId(inputFor(scenario), traceId);
-        } else if ("linkage-config-query".equals(capability)) {
-            result = service.queryQuestionnaireLinkageConfig(inputForQuestionnaire(scenario), traceId);
-        } else if ("linkage-config-save".equals(capability)) {
-            result = service.saveQuestionnaireLinkageConfig(inputForQuestionnaire(scenario), "v1", traceId);
-        } else if ("interview-session-detail".equals(capability)) {
-            result = service.questionnaireDetail(inputForQuestionnaire(scenario), traceId);
-        } else {
-            result = JsfExAssessService.providerUnavailable(traceId);
-        }
-
-        String rawStatus = result.getStatus().name();
-        String actualBehavior = compatibilityBehavior(scenario, rawStatus);
-        boolean passed = matches(contractCase.getExpectedBehavior(), scenario, rawStatus);
         String requestJson = "{"
                 + "\"trace_id\":" + quote(traceId)
                 + ",\"capability\":" + quote(capability)
                 + ",\"scenario\":" + quote(scenario)
                 + ",\"request_shape\":" + quote(contractCase.getRequestShape())
+                + ",\"arguments\":" + requestArgumentsJson(capability, scenario)
                 + "}";
+        try {
+            if ("questionnaire-query".equals(capability) || "subject-questionnaire-query".equals(capability)) {
+                operation = "queryQuestionnaireIdsBySubjectId";
+                result = service.queryQuestionnaireIdsBySubjectId(inputFor(scenario), traceId);
+            } else if ("linkage-config-query".equals(capability)) {
+                operation = "queryQuestionnaireLinkageConfig";
+                result = service.queryQuestionnaireLinkageConfig(inputForQuestionnaire(scenario), traceId);
+            } else if ("linkage-config-save".equals(capability)) {
+                operation = "saveQuestionnaireLinkageConfig";
+                result = service.saveQuestionnaireLinkageConfig(inputForQuestionnaire(scenario), "v1", traceId);
+            } else if ("interview-session-detail".equals(capability)) {
+                operation = "questionnaireDetail";
+                result = service.questionnaireDetail(inputForQuestionnaire(scenario), traceId);
+            } else {
+                operation = "providerUnavailable";
+                result = JsfExAssessService.providerUnavailable(traceId);
+            }
+        } catch (RuntimeException exception) {
+            providerError = exception.getClass().getSimpleName() + ": " + safeMessage(exception.getMessage());
+            result = OperationResult.of(OperationStatus.ERROR, safeMessage(exception.getMessage()), traceId, null);
+        }
+        long providerEnded = System.nanoTime();
+        Instant providerEndedAt = Instant.now();
+
+        String rawStatus = result.getStatus().name();
+        String actualBehavior = compatibilityBehavior(scenario, rawStatus);
+        boolean passed = matches(contractCase.getExpectedBehavior(), scenario, rawStatus);
+        long responseStarted = System.nanoTime();
+        Instant responseStartedAt = Instant.now();
         String responseJson = "{"
                 + "\"trace_id\":" + quote(traceId)
                 + ",\"status\":" + quote(rawStatus)
@@ -103,17 +130,82 @@ public final class ContractExperimentRunner {
                 + ",\"has_data\":" + (result.getData() != null)
                 + ",\"data\":" + dataJson(result.getData())
                 + "}";
-        String traceJson = "{"
-                + "\"trace_id\":" + quote(traceId)
-                + ",\"spans\":["
-                + "{\"name\":\"consumer\",\"status\":\"OK\"},"
-                + "{\"name\":\"provider\",\"status\":" + quote(rawStatus) + "},"
-                + "{\"name\":\"response\",\"status\":" + quote(rawStatus) + "}]"
-                + "}";
+        long responseEnded = System.nanoTime();
+        Instant responseEndedAt = Instant.now();
+        Map<String, String> consumerAttributes = mapOf(
+                "capability", capability,
+                "scenario", scenario,
+                "request_shape", contractCase.getRequestShape(),
+                "request_json", requestJson,
+                "duration_ns", String.valueOf(Math.max(0L, providerEnded - consumerStarted)));
+        Map<String, String> providerAttributes = mapOf(
+                "operation", operation,
+                "capability", capability,
+                "status", rawStatus,
+                "has_data", String.valueOf(result.getData() != null),
+                "request_json", requestJson,
+                "response_json", responseJson,
+                "duration_ns", String.valueOf(Math.max(0L, providerEnded - providerStarted)));
+        if (providerError != null) {
+            providerAttributes.put("error", providerError);
+        } else if (isErrorStatus(rawStatus)) {
+            providerAttributes.put("error", result.getMessage());
+        }
+        Map<String, String> responseAttributes = mapOf(
+                "status", rawStatus,
+                "response_json", responseJson,
+                "duration_ns", String.valueOf(Math.max(0L, responseEnded - responseStarted)));
+        trace.append(new TraceSpan("span-" + contractCase.getCaseId() + "-consumer", traceId, "consumer",
+                consumerStartedAt.toString(), providerEndedAt.toString(), durationMs(consumerStarted, providerEnded),
+                providerError == null ? "OK" : "ERROR", consumerAttributes));
+        trace.append(new TraceSpan("span-" + contractCase.getCaseId() + "-provider", traceId, "provider",
+                providerStartedAt.toString(), providerEndedAt.toString(), durationMs(providerStarted, providerEnded),
+                rawStatus, providerAttributes));
+        trace.append(new TraceSpan("span-" + contractCase.getCaseId() + "-response", traceId, "response",
+                responseStartedAt.toString(), responseEndedAt.toString(), durationMs(responseStarted, responseEnded),
+                rawStatus, responseAttributes));
+        trace.seal();
+        String traceJson = traceJson(trace);
         return new ContractExecution(contractCase.getCaseId(), capability, scenario,
                 contractCase.getRequestShape(), contractCase.getExpectedBehavior(), rawStatus,
                 actualBehavior, traceId, passed, ExperimentRunReport.DATA_IDENTITY,
                 requestJson, responseJson, traceJson);
+    }
+
+    private static long durationMs(long started, long ended) {
+        return Math.max(0L, (ended - started) / 1000000L);
+    }
+
+    private static boolean isErrorStatus(String status) {
+        return OperationStatus.ERROR.name().equals(status)
+                || OperationStatus.INVALID_INPUT.name().equals(status)
+                || OperationStatus.NOT_FOUND.name().equals(status);
+    }
+
+    private static String traceJson(Trace trace) {
+        StringBuilder builder = new StringBuilder("{")
+                .append("\"run_id\":").append(quote(trace.getRunId()))
+                .append(",\"trace_id\":").append(quote(trace.getTraceId()))
+                .append(",\"started_at\":").append(quote(trace.getStartedAt()))
+                .append(",\"sealed\":").append(trace.isSealed())
+                .append(",\"spans\":[");
+        List<TraceSpan> spans = trace.getSpans();
+        for (int index = 0; index < spans.size(); index++) {
+            if (index > 0) {
+                builder.append(',');
+            }
+            TraceSpan span = spans.get(index);
+            builder.append("{\"span_id\":").append(quote(span.getSpanId()))
+                    .append(",\"trace_id\":").append(quote(span.getTraceId()))
+                    .append(",\"name\":").append(quote(span.getName()))
+                    .append(",\"started_at\":").append(quote(span.getStartedAt()))
+                    .append(",\"ended_at\":").append(quote(span.getEndedAt()))
+                    .append(",\"duration_ms\":").append(span.getDurationMs())
+                    .append(",\"status\":").append(quote(span.getStatus()))
+                    .append(",\"attributes\":").append(traceAttributesJson(span.getAttributes()))
+                    .append('}');
+        }
+        return builder.append("]}").toString();
     }
 
     private static JsfExAssessService createService() {
@@ -166,7 +258,62 @@ public final class ContractExperimentRunner {
         if (value == null) {
             return "null";
         }
-        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        StringBuilder builder = new StringBuilder("\"");
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (character == '\\' || character == '\"') {
+                builder.append('\\').append(character);
+            } else if (character == '\n') {
+                builder.append("\\n");
+            } else if (character == '\r') {
+                builder.append("\\r");
+            } else if (character == '\t') {
+                builder.append("\\t");
+            } else if (character < 0x20) {
+                builder.append(String.format("\\u%04x", (int) character));
+            } else {
+                builder.append(character);
+            }
+        }
+        return builder.append('"').toString();
+    }
+
+    private static String safeMessage(String message) {
+        return message == null || message.trim().isEmpty() ? "provider call failed" : message;
+    }
+
+    private static String requestArgumentsJson(String capability, String scenario) {
+        if ("questionnaire-query".equals(capability) || "subject-questionnaire-query".equals(capability)) {
+            return "{\"subject_id\":" + quote(inputFor(scenario)) + "}";
+        }
+        if ("linkage-config-query".equals(capability) || "interview-session-detail".equals(capability)) {
+            return "{\"questionnaire_id\":" + quote(inputForQuestionnaire(scenario)) + "}";
+        }
+        if ("linkage-config-save".equals(capability)) {
+            return "{\"questionnaire_id\":" + quote(inputForQuestionnaire(scenario))
+                    + ",\"version\":\"v1\"}";
+        }
+        return "{}";
+    }
+
+    private static Map<String, String> mapOf(String... values) {
+        Map<String, String> result = new LinkedHashMap<String, String>();
+        for (int index = 0; index + 1 < values.length; index += 2) {
+            result.put(values[index], values[index + 1]);
+        }
+        return result;
+    }
+
+    private static String traceAttributesJson(Map<String, String> values) {
+        StringBuilder builder = new StringBuilder("{");
+        int index = 0;
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            if (index++ > 0) {
+                builder.append(',');
+            }
+            builder.append(quote(entry.getKey())).append(':').append(quote(entry.getValue()));
+        }
+        return builder.append('}').toString();
     }
 
     private static String dataJson(Object data) {

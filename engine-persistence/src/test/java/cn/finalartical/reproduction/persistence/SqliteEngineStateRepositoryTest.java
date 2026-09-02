@@ -197,7 +197,7 @@ public class SqliteEngineStateRepositoryTest {
         assertEquals("direct-read-error", restored.getErrorCode());
         assertEquals("DIRECT_READ_STATE", restored.getToState());
         assertEquals(written.getAfterSnapshot().getSha256(), restored.getAfterSnapshot().getSha256());
-        assertEquals(6, restored.getTrace().getSpans().size());
+        assertEquals(7, restored.getTrace().getSpans().size());
         assertEquals("normalized", restored.getTrace().getSpans().get(0).getAttributes().get("source"));
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
              ResultSet result = connection.createStatement().executeQuery(
@@ -205,7 +205,7 @@ public class SqliteEngineStateRepositoryTest {
             assertTrue(result.next());
             assertTrue(result.getInt(1) >= 1);
             assertEquals(2, result.getInt(2));
-            assertEquals(6, result.getInt(3));
+            assertEquals(7, result.getInt(3));
             assertEquals(1, result.getInt(4));
         }
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());

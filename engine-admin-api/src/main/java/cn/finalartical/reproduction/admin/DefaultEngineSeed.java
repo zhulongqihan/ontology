@@ -70,7 +70,7 @@ public final class DefaultEngineSeed {
         state.getServices().add(new ServiceRegistration(
                 "ontology-assembler",
                 "Ontology Detail Assembler",
-                "OntologyAssembler",
+                "LocalOntologyProvider",
                 "READY",
                 "local://ontology-assembler",
                 "v1"));

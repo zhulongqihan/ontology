@@ -306,8 +306,9 @@ public class EngineAdminServiceTest {
         assertEquals(2, run.getWorkflowVersion());
         assertEquals(run.getId(), run.getTrace().getRunId());
         assertTrue(run.getTrace().isSealed());
-        assertEquals(Arrays.asList("request", "validation", "workflow", "ontology", "persistence", "response"),
+        assertEquals(Arrays.asList("request", "validation", "workflow", "ontology", "provider", "persistence", "response"),
                 spanNames(run));
+        assertEquals("SKIPPED", run.getTrace().getSpans().get(4).getStatus());
         assertEquals("IN_INTERVIEW", service.context("ctx-evidence").getState());
         assertEquals(run.getAfterSnapshot().getSha256(), service.context("ctx-evidence").getLastSnapshotSha256());
     }
@@ -462,6 +463,76 @@ public class EngineAdminServiceTest {
         Map<?, ?> rootAttributes = (Map<?, ?>) root.get("attributes");
         assertEquals(1, rootAttributes.get("subjectCount"));
         assertEquals("集合", rootAttributes.get("subject.s-001.title"));
+        TraceSpanRecord providerSpan = run.getTrace().getSpans().get(4);
+        assertEquals("provider", providerSpan.getName());
+        assertEquals("OK", providerSpan.getStatus());
+        assertEquals("ontology-assembler", providerSpan.getAttributes().get("serviceId"));
+        assertEquals("LocalOntologyProvider", providerSpan.getAttributes().get("provider"));
+        assertTrue(providerSpan.getAttributes().get("requestJson").contains("assembleOntology"));
+        assertTrue(providerSpan.getAttributes().get("responseJson").contains("rootObjectId"));
+        assertTrue(providerSpan.getAttributes().containsKey("durationNs"));
+    }
+
+    @Test
+    public void unavailableOntologyProviderIsCapturedAndDoesNotCommitContext() throws Exception {
+        Path path = Files.createTempDirectory("engine-provider-failure").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> field = new LinkedHashMap<String, Object>();
+        field.put("name", "subjects");
+        field.put("type", "JSON");
+        service.addField("questionnaire", field);
+        service.services().get(1).setStatus("DOWN");
+
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("name", "Provider 故障");
+        values.put("subjectId", "subject-001");
+        values.put("subjects", Arrays.<Object>asList(new LinkedHashMap<String, Object>() {{
+            put("id", "s-001"); put("title", "集合");
+        }}));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "questionnaire");
+        payload.put("contextId", "ctx-provider-failure");
+        payload.put("event", "publish");
+        payload.put("values", values);
+
+        RuntimeRun run = service.execute(payload);
+
+        TraceSpanRecord providerSpan = run.getTrace().getSpans().get(4);
+        assertEquals("FAILED", run.getStatus());
+        assertEquals("FAILED", providerSpan.getStatus());
+        assertTrue(providerSpan.getAttributes().get("error").contains("not ready"));
+        assertTrue(!run.isContextCommitted());
+        assertEquals(0L, service.context("ctx-provider-failure").getRevision());
+    }
+
+    @Test
+    public void unboundProviderImplementationIsRejectedInsteadOfSilentlyFallingBack() throws Exception {
+        Path path = Files.createTempDirectory("engine-provider-binding").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> field = new LinkedHashMap<String, Object>();
+        field.put("name", "subjects");
+        field.put("type", "JSON");
+        service.addField("questionnaire", field);
+        service.services().get(1).setProvider("RemoteOntologyProvider");
+
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("name", "Provider 绑定");
+        values.put("subjectId", "subject-001");
+        values.put("subjects", Arrays.<Object>asList(new LinkedHashMap<String, Object>() {{
+            put("id", "s-001"); put("title", "集合");
+        }}));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "questionnaire");
+        payload.put("contextId", "ctx-provider-binding");
+        payload.put("event", "publish");
+        payload.put("values", values);
+
+        RuntimeRun run = service.execute(payload);
+
+        TraceSpanRecord providerSpan = run.getTrace().getSpans().get(4);
+        assertEquals("FAILED", providerSpan.getStatus());
+        assertTrue(providerSpan.getAttributes().get("error").contains("not available in-process"));
+        assertTrue(!run.isContextCommitted());
     }
 
     @Test
