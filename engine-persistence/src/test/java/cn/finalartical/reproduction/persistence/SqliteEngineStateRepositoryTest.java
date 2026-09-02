@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
 import static org.junit.Assert.assertEquals;
@@ -91,12 +92,39 @@ public class SqliteEngineStateRepositoryTest {
         payload.put("values", values);
         RuntimeRun written = service.execute(payload);
 
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement contextUpdate = connection.prepareStatement(
+                     "UPDATE runtime_context SET state = ?, status = ? WHERE context_id = ?");
+             PreparedStatement runUpdate = connection.prepareStatement(
+                     "UPDATE runtime_run SET status = ?, error_code = ?, to_state = ? WHERE run_id = ?");
+             PreparedStatement spanUpdate = connection.prepareStatement(
+                     "UPDATE trace_span SET attributes_json = ? WHERE trace_id = ? AND name = ?")) {
+            contextUpdate.setString(1, "DIRECT_READ_STATE");
+            contextUpdate.setString(2, "DIRECT_READ_STATUS");
+            contextUpdate.setString(3, "ctx-restart");
+            contextUpdate.executeUpdate();
+            runUpdate.setString(1, "DIRECT_READ_RUN_STATUS");
+            runUpdate.setString(2, "direct-read-error");
+            runUpdate.setString(3, "DIRECT_READ_STATE");
+            runUpdate.setString(4, written.getId());
+            runUpdate.executeUpdate();
+            spanUpdate.setString(1, "{\"source\":\"normalized\"}");
+            spanUpdate.setString(2, written.getTraceId());
+            spanUpdate.setString(3, "request");
+            spanUpdate.executeUpdate();
+        }
+
         EngineAdminService reloaded = new EngineAdminService(new SqliteEngineStateRepository(database));
         RuntimeRun restored = reloaded.run(written.getId());
 
-        assertEquals("IN_INTERVIEW", reloaded.context("ctx-restart").getState());
+        assertEquals("DIRECT_READ_STATE", reloaded.context("ctx-restart").getState());
+        assertEquals("DIRECT_READ_STATUS", reloaded.context("ctx-restart").getStatus());
+        assertEquals("DIRECT_READ_RUN_STATUS", restored.getStatus());
+        assertEquals("direct-read-error", restored.getErrorCode());
+        assertEquals("DIRECT_READ_STATE", restored.getToState());
         assertEquals(written.getAfterSnapshot().getSha256(), restored.getAfterSnapshot().getSha256());
         assertEquals(6, restored.getTrace().getSpans().size());
+        assertEquals("normalized", restored.getTrace().getSpans().get(0).getAttributes().get("source"));
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT count(*) FROM runtime_run), (SELECT count(*) FROM execution_snapshot), (SELECT count(*) FROM trace_span), (SELECT count(*) FROM idempotency_record)")) {
