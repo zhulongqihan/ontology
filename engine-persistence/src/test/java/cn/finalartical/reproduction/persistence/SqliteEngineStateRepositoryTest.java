@@ -59,6 +59,23 @@ public class SqliteEngineStateRepositoryTest {
     }
 
     @Test
+    public void readsConfigurationFromNormalizedTablesBeforeCompatibilityPayload() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-normalized-read");
+        Path database = directory.resolve("engine.db");
+        SqliteEngineStateRepository repository = new SqliteEngineStateRepository(database);
+        repository.load();
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath())) {
+            connection.createStatement().executeUpdate(
+                    "UPDATE engine_model SET name = '从规范化表读取' WHERE model_id = 'interview-session'");
+        }
+
+        EngineState reloaded = repository.load();
+
+        assertEquals("从规范化表读取", findModel(reloaded, "interview-session").getName());
+    }
+
+    @Test
     public void runtimeDomainProjectionSurvivesRepositoryRestart() throws Exception {
         Path directory = Files.createTempDirectory("engine-sqlite-runtime");
         Path database = directory.resolve("engine.db");
@@ -112,5 +129,14 @@ public class SqliteEngineStateRepositoryTest {
             assertTrue(result.getInt(5) >= 2);
             assertTrue(result.getInt(6) >= 2);
         }
+    }
+
+    private static cn.finalartical.reproduction.admin.EngineModel findModel(EngineState state, String modelId) {
+        for (cn.finalartical.reproduction.admin.EngineModel model : state.getModels()) {
+            if (modelId.equals(model.getId())) {
+                return model;
+            }
+        }
+        throw new AssertionError("model not found: " + modelId);
     }
 }

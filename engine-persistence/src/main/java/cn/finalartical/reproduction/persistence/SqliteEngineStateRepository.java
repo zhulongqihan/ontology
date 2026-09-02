@@ -21,9 +21,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.ConcurrentModificationException;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class SqliteEngineStateRepository implements EngineStateRepository {
     private static final int SCHEMA_VERSION = 4;
@@ -58,6 +61,8 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             state.setRevision(currentRevision(connection));
             connection.setAutoCommit(false);
             try {
+                loadConfigurationProjection(connection, state);
+                loadRuntimeProjection(connection, state);
                 synchronizeConfigurationProjection(connection, state);
                 synchronizeRuntimeProjection(connection, state);
                 connection.commit();
@@ -577,6 +582,443 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 insert.addBatch();
             }
             insert.executeBatch();
+        }
+    }
+
+    /**
+     * Rehydrates configuration from normalized tables before the compatibility
+     * aggregate is projected again.  The aggregate remains a migration/backup
+     * envelope for runtime history, but configuration reads no longer depend on
+     * its embedded JSON arrays once v4 has data.
+     */
+    private void loadConfigurationProjection(Connection connection, EngineState state) throws SQLException {
+        if (!hasConfigurationProjection(connection)) {
+            return;
+        }
+
+        Map<String, cn.finalartical.reproduction.admin.EngineModel> models = new LinkedHashMap<String, cn.finalartical.reproduction.admin.EngineModel>();
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT model_id, name, description, schema_version, workflow_version, initial_state, unknown_field_policy, updated_at "
+                        + "FROM engine_model ORDER BY model_id")) {
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    cn.finalartical.reproduction.admin.EngineModel model = new cn.finalartical.reproduction.admin.EngineModel(
+                            result.getString("model_id"), result.getString("name"), result.getString("description"),
+                            result.getInt("schema_version"), result.getString("initial_state"));
+                    model.setWorkflowVersion(result.getInt("workflow_version"));
+                    model.setUnknownFieldPolicy(result.getString("unknown_field_policy"));
+                    model.setUpdatedAt(result.getString("updated_at"));
+                    models.put(model.getId(), model);
+                }
+            }
+        }
+
+        Map<String, Map<Integer, cn.finalartical.reproduction.admin.SchemaVersionRecord>> schemaVersions =
+                new LinkedHashMap<String, Map<Integer, cn.finalartical.reproduction.admin.SchemaVersionRecord>>();
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT model_id, schema_version, published_at FROM schema_definition ORDER BY model_id, schema_version")) {
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    String modelId = result.getString("model_id");
+                    Map<Integer, cn.finalartical.reproduction.admin.SchemaVersionRecord> versions = schemaVersions.get(modelId);
+                    if (versions == null) {
+                        versions = new LinkedHashMap<Integer, cn.finalartical.reproduction.admin.SchemaVersionRecord>();
+                        schemaVersions.put(modelId, versions);
+                    }
+                    int version = result.getInt("schema_version");
+                    versions.put(version, new cn.finalartical.reproduction.admin.SchemaVersionRecord(
+                            version, result.getString("published_at"), new ArrayList<cn.finalartical.reproduction.admin.EngineField>()));
+                }
+            }
+        }
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT model_id, schema_version, field_name, field_type, required, field_version, default_value_json "
+                        + "FROM schema_field ORDER BY model_id, schema_version, field_name")) {
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    Map<Integer, cn.finalartical.reproduction.admin.SchemaVersionRecord> versions = schemaVersions.get(result.getString("model_id"));
+                    if (versions == null || !versions.containsKey(result.getInt("schema_version"))) {
+                        throw new SQLException("schema_field has no parent schema_definition: " + result.getString("field_name"));
+                    }
+                    versions.get(result.getInt("schema_version")).getFields().add(new cn.finalartical.reproduction.admin.EngineField(
+                            result.getString("field_name"), result.getString("field_type"), result.getInt("required") != 0,
+                            result.getInt("field_version"), readJsonValue(result.getString("default_value_json"))));
+                }
+            }
+        }
+        for (Map.Entry<String, cn.finalartical.reproduction.admin.EngineModel> entry : models.entrySet()) {
+            Map<Integer, cn.finalartical.reproduction.admin.SchemaVersionRecord> versions = schemaVersions.get(entry.getKey());
+            List<cn.finalartical.reproduction.admin.SchemaVersionRecord> ordered = new ArrayList<cn.finalartical.reproduction.admin.SchemaVersionRecord>();
+            if (versions != null) {
+                ordered.addAll(versions.values());
+            }
+            entry.getValue().setSchemaVersions(ordered);
+            cn.finalartical.reproduction.admin.SchemaVersionRecord current = versions == null ? null
+                    : versions.get(entry.getValue().getSchemaVersion());
+            entry.getValue().setFields(current == null ? Collections.<cn.finalartical.reproduction.admin.EngineField>emptyList()
+                    : current.getFields());
+        }
+
+        Map<String, Map<Integer, cn.finalartical.reproduction.admin.WorkflowVersionRecord>> workflowVersions =
+                new LinkedHashMap<String, Map<Integer, cn.finalartical.reproduction.admin.WorkflowVersionRecord>>();
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT model_id, workflow_version, initial_state, published_at FROM workflow_definition ORDER BY model_id, workflow_version")) {
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    String modelId = result.getString("model_id");
+                    Map<Integer, cn.finalartical.reproduction.admin.WorkflowVersionRecord> versions = workflowVersions.get(modelId);
+                    if (versions == null) {
+                        versions = new LinkedHashMap<Integer, cn.finalartical.reproduction.admin.WorkflowVersionRecord>();
+                        workflowVersions.put(modelId, versions);
+                    }
+                    int version = result.getInt("workflow_version");
+                    versions.put(version, new cn.finalartical.reproduction.admin.WorkflowVersionRecord(
+                            version, result.getString("published_at"), result.getString("initial_state"),
+                            new ArrayList<cn.finalartical.reproduction.admin.EngineTransition>()));
+                }
+            }
+        }
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT model_id, workflow_version, from_state, event, to_state FROM workflow_transition "
+                        + "ORDER BY model_id, workflow_version, from_state, event")) {
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    Map<Integer, cn.finalartical.reproduction.admin.WorkflowVersionRecord> versions = workflowVersions.get(result.getString("model_id"));
+                    if (versions == null || !versions.containsKey(result.getInt("workflow_version"))) {
+                        throw new SQLException("workflow_transition has no parent workflow_definition: " + result.getString("event"));
+                    }
+                    versions.get(result.getInt("workflow_version")).getTransitions().add(new cn.finalartical.reproduction.admin.EngineTransition(
+                            result.getString("from_state"), result.getString("event"), result.getString("to_state")));
+                }
+            }
+        }
+        for (Map.Entry<String, cn.finalartical.reproduction.admin.EngineModel> entry : models.entrySet()) {
+            Map<Integer, cn.finalartical.reproduction.admin.WorkflowVersionRecord> versions = workflowVersions.get(entry.getKey());
+            List<cn.finalartical.reproduction.admin.WorkflowVersionRecord> ordered = new ArrayList<cn.finalartical.reproduction.admin.WorkflowVersionRecord>();
+            if (versions != null) {
+                ordered.addAll(versions.values());
+            }
+            entry.getValue().setWorkflowVersions(ordered);
+            cn.finalartical.reproduction.admin.WorkflowVersionRecord current = versions == null ? null
+                    : versions.get(entry.getValue().getWorkflowVersion());
+            List<cn.finalartical.reproduction.admin.EngineTransition> transitions = current == null
+                    ? Collections.<cn.finalartical.reproduction.admin.EngineTransition>emptyList() : current.getTransitions();
+            entry.getValue().setTransitions(transitions);
+            List<String> states = new ArrayList<String>();
+            addState(states, entry.getValue().getInitialState());
+            for (cn.finalartical.reproduction.admin.EngineTransition transition : transitions) {
+                addState(states, transition.getFromState());
+                addState(states, transition.getToState());
+            }
+            entry.getValue().setStates(states);
+        }
+
+        Map<String, cn.finalartical.reproduction.admin.OntologyTypeConfig> ontologyTypes =
+                new LinkedHashMap<String, cn.finalartical.reproduction.admin.OntologyTypeConfig>();
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT ontology_type_id, label, description FROM ontology_type ORDER BY ontology_type_id")) {
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    ontologyTypes.put(result.getString("ontology_type_id"),
+                            new cn.finalartical.reproduction.admin.OntologyTypeConfig(result.getString("ontology_type_id"),
+                                    result.getString("label"), result.getString("description")));
+                }
+            }
+        }
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT ontology_type_id, attribute_name, attribute_kind FROM ontology_attribute "
+                        + "ORDER BY ontology_type_id, attribute_name")) {
+            try (ResultSet result = query.executeQuery()) {
+                cn.finalartical.reproduction.admin.OntologyTypeConfig type;
+                while (result.next()) {
+                    type = ontologyTypes.get(result.getString("ontology_type_id"));
+                    if (type == null) {
+                        throw new SQLException("ontology_attribute has no parent ontology_type: " + result.getString("attribute_name"));
+                    }
+                    if ("FIXED".equalsIgnoreCase(result.getString("attribute_kind"))) {
+                        type.getFixedAttributes().add(result.getString("attribute_name"));
+                    } else {
+                        type.getDynamicAttributes().add(result.getString("attribute_name"));
+                    }
+                }
+            }
+        }
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT ontology_type_id, relation_name, target_type, cardinality FROM ontology_relation "
+                        + "ORDER BY ontology_type_id, relation_name")) {
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    cn.finalartical.reproduction.admin.OntologyTypeConfig type = ontologyTypes.get(result.getString("ontology_type_id"));
+                    if (type == null) {
+                        throw new SQLException("ontology_relation has no parent ontology_type: " + result.getString("relation_name"));
+                    }
+                    type.getRelations().add(new cn.finalartical.reproduction.admin.OntologyRelationConfig(
+                            result.getString("relation_name"), result.getString("target_type"), result.getString("cardinality")));
+                }
+            }
+        }
+
+        List<cn.finalartical.reproduction.admin.ServiceRegistration> services = new ArrayList<cn.finalartical.reproduction.admin.ServiceRegistration>();
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT service_id, name, provider, status, endpoint, version FROM service_registration ORDER BY service_id")) {
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    services.add(new cn.finalartical.reproduction.admin.ServiceRegistration(result.getString("service_id"),
+                            result.getString("name"), result.getString("provider"), result.getString("status"),
+                            result.getString("endpoint"), result.getString("version")));
+                }
+            }
+        }
+        state.setModels(new ArrayList<cn.finalartical.reproduction.admin.EngineModel>(models.values()));
+        state.setOntologyTypes(new ArrayList<cn.finalartical.reproduction.admin.OntologyTypeConfig>(ontologyTypes.values()));
+        state.setServices(services);
+    }
+
+    private boolean hasConfigurationProjection(Connection connection) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT count(*) FROM engine_model")) {
+            try (ResultSet result = query.executeQuery()) {
+                return result.next() && result.getInt(1) > 0;
+            }
+        }
+    }
+
+    private void loadRuntimeProjection(Connection connection, EngineState state) throws SQLException {
+        if (rowCount(connection, "runtime_context") > 0) {
+            List<cn.finalartical.reproduction.admin.RuntimeContextRecord> contexts = new ArrayList<cn.finalartical.reproduction.admin.RuntimeContextRecord>();
+            try (PreparedStatement query = connection.prepareStatement(
+                    "SELECT context_id, model_id, schema_version, workflow_version, state, status, revision, "
+                            + "last_run_id, last_snapshot_sha256, values_json, updated_at FROM runtime_context ORDER BY updated_at DESC")) {
+                try (ResultSet result = query.executeQuery()) {
+                    while (result.next()) {
+                        cn.finalartical.reproduction.admin.RuntimeContextRecord context =
+                                new cn.finalartical.reproduction.admin.RuntimeContextRecord(result.getString("context_id"),
+                                        result.getString("model_id"), result.getInt("schema_version"),
+                                        result.getInt("workflow_version"), result.getString("state"),
+                                        result.getString("status"), result.getLong("revision"), result.getString("updated_at"));
+                        context.setLastRunId(result.getString("last_run_id"));
+                        context.setLastSnapshotSha256(result.getString("last_snapshot_sha256"));
+                        context.setValues(readMapValue(result.getString("values_json")));
+                        contexts.add(context);
+                    }
+                }
+            }
+            state.setContexts(contexts);
+        }
+
+        Map<String, cn.finalartical.reproduction.admin.RuntimeRun> runs = new LinkedHashMap<String, cn.finalartical.reproduction.admin.RuntimeRun>();
+        if (rowCount(connection, "runtime_run") > 0) {
+            try (PreparedStatement query = connection.prepareStatement(
+                    "SELECT run_id, model_id, context_id, engine_version, schema_version, workflow_version, status, "
+                            + "data_identity, event, from_state, to_state, trace_id, idempotency_key, context_revision, "
+                            + "context_committed, error_code, created_at, duration_ms, values_json, validation_errors_json, "
+                            + "ontology_graph_json, input_values_json, retry_of_run_id, attempt FROM runtime_run ORDER BY created_at DESC")) {
+                try (ResultSet result = query.executeQuery()) {
+                    while (result.next()) {
+                        cn.finalartical.reproduction.admin.RuntimeRun run = new cn.finalartical.reproduction.admin.RuntimeRun();
+                        run.setId(result.getString("run_id"));
+                        run.setModelId(result.getString("model_id"));
+                        run.setContextId(result.getString("context_id"));
+                        run.setEngineVersion(result.getString("engine_version"));
+                        run.setSchemaVersion(result.getInt("schema_version"));
+                        run.setWorkflowVersion(result.getInt("workflow_version"));
+                        run.setStatus(result.getString("status"));
+                        run.setDataIdentity(result.getString("data_identity"));
+                        run.setEvent(result.getString("event"));
+                        run.setFromState(result.getString("from_state"));
+                        run.setToState(result.getString("to_state"));
+                        run.setTraceId(result.getString("trace_id"));
+                        run.setIdempotencyKey(result.getString("idempotency_key"));
+                        run.setContextRevision(result.getLong("context_revision"));
+                        run.setContextCommitted(result.getInt("context_committed") != 0);
+                        run.setErrorCode(result.getString("error_code"));
+                        run.setCreatedAt(result.getString("created_at"));
+                        run.setDurationMs(result.getLong("duration_ms"));
+                        run.setValues(readMapValue(result.getString("values_json")));
+                        run.setValidationErrors(readStringListValue(result.getString("validation_errors_json")));
+                        run.setOntologyGraph(readMapValue(result.getString("ontology_graph_json")));
+                        run.setInputValues(readMapValue(result.getString("input_values_json")));
+                        run.setRetryOfRunId(result.getString("retry_of_run_id"));
+                        run.setAttempt(result.getInt("attempt"));
+                        runs.put(run.getId(), run);
+                    }
+                }
+            }
+            state.setRuns(new ArrayList<cn.finalartical.reproduction.admin.RuntimeRun>(runs.values()));
+        }
+
+        if (rowCount(connection, "execution_snapshot") > 0 && !runs.isEmpty()) {
+            try (PreparedStatement query = connection.prepareStatement(
+                    "SELECT run_id, phase, context_id, model_id, schema_version, workflow_version, state, status, "
+                            + "captured_at, values_json, sha256 FROM execution_snapshot ORDER BY captured_at")) {
+                try (ResultSet result = query.executeQuery()) {
+                    while (result.next()) {
+                        cn.finalartical.reproduction.admin.RuntimeRun run = runs.get(result.getString("run_id"));
+                        if (run == null) {
+                            continue;
+                        }
+                        cn.finalartical.reproduction.admin.ExecutionSnapshotRecord snapshot = new cn.finalartical.reproduction.admin.ExecutionSnapshotRecord();
+                        snapshot.setPhase(result.getString("phase"));
+                        snapshot.setContextId(result.getString("context_id"));
+                        snapshot.setModelId(result.getString("model_id"));
+                        snapshot.setSchemaVersion(result.getInt("schema_version"));
+                        snapshot.setWorkflowVersion(result.getInt("workflow_version"));
+                        snapshot.setState(result.getString("state"));
+                        snapshot.setStatus(result.getString("status"));
+                        snapshot.setCapturedAt(result.getString("captured_at"));
+                        snapshot.setValues(readMapValue(result.getString("values_json")));
+                        snapshot.setSha256(result.getString("sha256"));
+                        if ("BEFORE".equalsIgnoreCase(snapshot.getPhase())) {
+                            run.setBeforeSnapshot(snapshot);
+                        } else if ("AFTER".equalsIgnoreCase(snapshot.getPhase())) {
+                            run.setAfterSnapshot(snapshot);
+                        }
+                    }
+                }
+            }
+        }
+
+        Map<String, cn.finalartical.reproduction.admin.TraceRecord> traces = new LinkedHashMap<String, cn.finalartical.reproduction.admin.TraceRecord>();
+        if (rowCount(connection, "trace") > 0 && !runs.isEmpty()) {
+            try (PreparedStatement query = connection.prepareStatement(
+                    "SELECT trace_id, run_id, started_at, ended_at, duration_ms, status, sealed FROM trace ORDER BY started_at DESC")) {
+                try (ResultSet result = query.executeQuery()) {
+                    while (result.next()) {
+                        cn.finalartical.reproduction.admin.RuntimeRun run = runs.get(result.getString("run_id"));
+                        if (run == null) {
+                            continue;
+                        }
+                        cn.finalartical.reproduction.admin.TraceRecord trace = new cn.finalartical.reproduction.admin.TraceRecord();
+                        trace.setTraceId(result.getString("trace_id"));
+                        trace.setRunId(result.getString("run_id"));
+                        trace.setStartedAt(result.getString("started_at"));
+                        trace.setEndedAt(result.getString("ended_at"));
+                        trace.setDurationMs(result.getLong("duration_ms"));
+                        trace.setStatus(result.getString("status"));
+                        trace.setSealed(result.getInt("sealed") != 0);
+                        run.setTrace(trace);
+                        traces.put(trace.getTraceId(), trace);
+                    }
+                }
+            }
+        }
+        if (rowCount(connection, "trace_span") > 0 && !traces.isEmpty()) {
+            try (PreparedStatement query = connection.prepareStatement(
+                    "SELECT span_id, trace_id, name, started_at, ended_at, duration_ms, status, attributes_json "
+                            + "FROM trace_span ORDER BY started_at")) {
+                try (ResultSet result = query.executeQuery()) {
+                    while (result.next()) {
+                        cn.finalartical.reproduction.admin.TraceRecord trace = traces.get(result.getString("trace_id"));
+                        if (trace == null) {
+                            continue;
+                        }
+                        trace.getSpans().add(new cn.finalartical.reproduction.admin.TraceSpanRecord(
+                                result.getString("span_id"), result.getString("trace_id"), result.getString("name"),
+                                result.getString("started_at"), result.getString("ended_at"), result.getLong("duration_ms"),
+                                result.getString("status"), readStringMapValue(result.getString("attributes_json"))));
+                    }
+                }
+            }
+        }
+
+        if (rowCount(connection, "audit_event") > 0) {
+            List<cn.finalartical.reproduction.admin.AuditEventRecord> events = new ArrayList<cn.finalartical.reproduction.admin.AuditEventRecord>();
+            try (PreparedStatement query = connection.prepareStatement(
+                    "SELECT audit_id, action, target_type, target_id, created_at, details FROM audit_event ORDER BY created_at DESC")) {
+                try (ResultSet result = query.executeQuery()) {
+                    while (result.next()) {
+                        events.add(new cn.finalartical.reproduction.admin.AuditEventRecord(result.getString("audit_id"),
+                                result.getString("action"), result.getString("target_type"), result.getString("target_id"),
+                                result.getString("created_at"), result.getString("details")));
+                    }
+                }
+            }
+            state.setAuditEvents(events);
+        }
+        if (rowCount(connection, "idempotency_record") > 0) {
+            List<cn.finalartical.reproduction.admin.IdempotencyRecord> records = new ArrayList<cn.finalartical.reproduction.admin.IdempotencyRecord>();
+            try (PreparedStatement query = connection.prepareStatement(
+                    "SELECT scope, idempotency_key, request_sha256, run_id, created_at FROM idempotency_record ORDER BY created_at DESC")) {
+                try (ResultSet result = query.executeQuery()) {
+                    while (result.next()) {
+                        records.add(new cn.finalartical.reproduction.admin.IdempotencyRecord(result.getString("scope"),
+                                result.getString("idempotency_key"), result.getString("request_sha256"),
+                                result.getString("run_id"), result.getString("created_at")));
+                    }
+                }
+            }
+            state.setIdempotencyRecords(records);
+        }
+    }
+
+    private int rowCount(Connection connection, String table) throws SQLException {
+        if (!table.matches("[a-z_]+")) {
+            throw new IllegalArgumentException("invalid projection table: " + table);
+        }
+        try (PreparedStatement query = connection.prepareStatement("SELECT count(*) FROM " + table)) {
+            try (ResultSet result = query.executeQuery()) {
+                return result.next() ? result.getInt(1) : 0;
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readMapValue(String value) throws SQLException {
+        if (value == null || value.trim().isEmpty()) {
+            return new LinkedHashMap<String, Object>();
+        }
+        try {
+            Object decoded = mapper.readValue(value, Object.class);
+            if (!(decoded instanceof Map)) {
+                throw new SQLException("expected JSON object in runtime projection");
+            }
+            return new LinkedHashMap<String, Object>((Map<String, Object>) decoded);
+        } catch (IOException exception) {
+            throw new SQLException("cannot decode runtime projection JSON object", exception);
+        }
+    }
+
+    private List<String> readStringListValue(String value) throws SQLException {
+        if (value == null || value.trim().isEmpty()) {
+            return new ArrayList<String>();
+        }
+        try {
+            Object decoded = mapper.readValue(value, Object.class);
+            if (!(decoded instanceof List)) {
+                throw new SQLException("expected JSON array in runtime projection");
+            }
+            List<String> result = new ArrayList<String>();
+            for (Object item : (List<?>) decoded) {
+                result.add(String.valueOf(item));
+            }
+            return result;
+        } catch (IOException exception) {
+            throw new SQLException("cannot decode runtime projection JSON array", exception);
+        }
+    }
+
+    private Map<String, String> readStringMapValue(String value) throws SQLException {
+        Map<String, Object> decoded = readMapValue(value);
+        Map<String, String> result = new LinkedHashMap<String, String>();
+        for (Map.Entry<String, Object> entry : decoded.entrySet()) {
+            result.put(entry.getKey(), String.valueOf(entry.getValue()));
+        }
+        return result;
+    }
+
+    private Object readJsonValue(String value) throws SQLException {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return mapper.readValue(value, Object.class);
+        } catch (IOException exception) {
+            throw new SQLException("cannot decode configuration JSON value", exception);
+        }
+    }
+
+    private void addState(List<String> states, String value) {
+        if (value != null && !states.contains(value)) {
+            states.add(value);
         }
     }
 

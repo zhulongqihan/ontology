@@ -172,7 +172,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：40/40 通过。
+- Maven 多模块测试：44/44 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
@@ -193,7 +193,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前版本是论文级柔性引擎与本体化平台的可运行基础，但仍不是完整生产级实现。已完成运行域证据闭环的第一切片，仍需继续完善的工程能力包括：
 
-- SQLite 已建立配置域和运行域规范化表及事务投影；当前状态文档仍是兼容权威源，直接从配置投影读取和投影完整性校验仍待继续。
+- SQLite 已建立配置域和运行域规范化表及事务投影；配置读取已优先从规范化表重建，状态 JSON 保留为运行历史兼容备份，投影完整性校验和运行域完全直读仍待继续。
 - Schema 迁移规则、字段编辑/删除和版本回滚。
 - 故障注入、更细粒度的并发冲突恢复和重试策略配置。
 - 请求—响应—Provider 的真实多服务调用链和更多 Trace 语义。
