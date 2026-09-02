@@ -180,7 +180,9 @@ public final class ReproductionExperimentSuite {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("repository", "SQLite"); result.put("idempotent_repetitions", 10);
         result.put("idempotent_unique_persisted_runs_after_restart", restarted.runs().size());
-        result.put("idempotent_same_returned_run", sameRun && afterRestart.getId().equals(returnedRunIds.get(0)));
+        boolean restartPreservedIdempotency = sameRun && afterRestart.getId().equals(returnedRunIds.get(0));
+        result.put("idempotent_same_returned_run", restartPreservedIdempotency);
+        result.put("restart_preserved_idempotency", restartPreservedIdempotency);
         result.put("contract_repetitions", contractRepetitions);
         result.put("contract_outcome_stable_across_seeds", stableContractOutcome);
         result.put("same_seed_report_stable", sameSeedFirst.toJson().equals(sameSeedSecond.toJson()));
@@ -243,6 +245,7 @@ public final class ReproductionExperimentSuite {
         appendCsv(csv, "B", "persistence_failure_atomic", value(report, "B_fault_injection", "persistence_failure_atomic"));
         appendCsv(csv, "B", "retry_recovered", value(report, "B_fault_injection", "retry_recovered"));
         appendCsv(csv, "C", "idempotent_unique_persisted_runs_after_restart", value(report, "C_repeatability_ablation", "idempotent_unique_persisted_runs_after_restart"));
+        appendCsv(csv, "C", "restart_preserved_idempotency", value(report, "C_repeatability_ablation", "restart_preserved_idempotency"));
         appendCsv(csv, "C", "contract_outcome_stable_across_seeds", value(report, "C_repeatability_ablation", "contract_outcome_stable_across_seeds"));
         appendCsv(csv, "C", "same_seed_report_stable", value(report, "C_repeatability_ablation", "same_seed_report_stable"));
         Files.write(output, csv.toString().getBytes(StandardCharsets.UTF_8));
