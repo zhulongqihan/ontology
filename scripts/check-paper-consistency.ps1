@@ -48,7 +48,7 @@ if ($RequireExperiment) {
     if (-not $report.B_fault_injection.persistence_failure_atomic -or -not $report.B_fault_injection.retry_recovered) {
         throw 'fault-injection result does not match the paper claim'
     }
-    if ($report.C_repeatability_ablation.idempotent_unique_persisted_runs -ne 1 -or
+    if ($report.C_repeatability_ablation.idempotent_unique_persisted_runs_after_restart -ne 1 -or
         -not $report.C_repeatability_ablation.contract_outcome_stable_across_seeds -or
         -not $report.C_repeatability_ablation.same_seed_report_stable -or
         -not $report.C_repeatability_ablation.restart_preserved_idempotency) {
