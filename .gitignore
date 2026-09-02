@@ -3,6 +3,10 @@ target/
 *.iml
 frontend/node_modules/
 frontend/dist/
+frontend/*.js
+frontend/*.d.ts
+frontend/*.tsbuildinfo
+output/playwright/
 runs/*
 datasets/generated/*
 !runs/.gitkeep

@@ -16,6 +16,7 @@
 - 本地 Provider/Consumer 兼容服务。
 - 20 条契约实验规格文件。
 - 可运行的命令行 smoke demo。
+- React/Vite 中文实验控制台：总览、契约矩阵、Trace Inspector、柔性引擎、本体模型和运行记录。
 
 ## 构建与运行
 
@@ -30,3 +31,17 @@ java -jar reproduction-app/target/reproduction-app-0.1.0-SNAPSHOT.jar contract e
 ```
 
 当前开发机使用 JDK 17 和 Maven 3.8.6；源码保持 Java 8 兼容语法。`contract` 模式会执行 20 条契约规格并生成 `runs/contract-20/latest` 下的逐用例运行文件。
+
+## 前端可视化
+
+前端位于 `frontend/`，当前使用已验证的 `contract-20` 运行结果作为只读展示快照；页面中的数据身份仍明确标记为 `REPRODUCED_SYSTEM_RUN`。启动后访问 `http://127.0.0.1:5174/`：
+
+```powershell
+Set-Location frontend
+npm install
+npm run dev
+# 生产构建检查
+npm run build
+```
+
+当前前端不把静态展示快照伪装成后端接口。下一阶段会让页面直接读取 `runs/contract-20/<run-id>` 的 manifest、report、request、response、trace 和 sha256 文件，再接入实验执行与导出接口。
