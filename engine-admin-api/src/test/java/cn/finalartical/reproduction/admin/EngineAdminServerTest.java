@@ -43,12 +43,21 @@ public class EngineAdminServerTest {
 
             HttpResponse detail = request(server, "GET", "/api/runs/" + run.getId(), null);
             HttpResponse trace = request(server, "GET", "/api/runs/" + run.getId() + "/trace", null);
+            HttpResponse snapshots = request(server, "GET", "/api/runs/" + run.getId() + "/snapshots", null);
+            HttpResponse idempotency = request(server, "GET", "/api/idempotency-records", null);
+            HttpResponse export = request(server, "GET", "/api/export", null);
             HttpResponse rollback = request(server, "POST", "/api/runs/" + run.getId() + "/rollback", "{}");
             assertEquals(200, detail.status);
             assertEquals(200, trace.status);
+            assertEquals(200, snapshots.status);
+            assertEquals(200, idempotency.status);
+            assertEquals(200, export.status);
             assertEquals(200, rollback.status);
             assertTrue(detail.body.contains("beforeSnapshot"));
             assertTrue(trace.body.contains("validation"));
+            assertTrue(snapshots.body.contains("BEFORE"));
+            assertTrue(idempotency.body.contains("http-1"));
+            assertTrue(export.body.contains("ENGINE_RUNTIME_RESULT"));
             assertTrue(rollback.body.contains("ROLLED_BACK"));
         } finally {
             server.stop();

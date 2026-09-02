@@ -19,10 +19,27 @@ export interface EngineModel {
   name: string
   description: string
   schemaVersion: number
+  workflowVersion: number
   initialState: string
   updatedAt: string
+  unknownFieldPolicy: string
   fields: EngineField[]
   states: string[]
+  transitions: EngineTransition[]
+  schemaVersions: SchemaVersion[]
+  workflowVersions: WorkflowVersion[]
+}
+
+export interface SchemaVersion {
+  version: number
+  publishedAt: string
+  fields: EngineField[]
+}
+
+export interface WorkflowVersion {
+  version: number
+  publishedAt: string
+  initialState: string
   transitions: EngineTransition[]
 }
 
@@ -54,7 +71,7 @@ export interface RuntimeRun {
   id: string
   modelId: string
   contextId: string
-  status: 'PASSED' | 'FAILED'
+  status: 'PASSED' | 'FAILED' | 'ROLLED_BACK'
   dataIdentity: string
   event: string
   fromState: string
@@ -62,8 +79,74 @@ export interface RuntimeRun {
   traceId: string
   createdAt: string
   durationMs: number
+  engineVersion?: string
+  schemaVersion?: number
+  workflowVersion?: number
+  idempotencyKey?: string | null
+  retryOfRunId?: string | null
+  attempt?: number
+  contextRevision?: number
+  contextCommitted?: boolean
+  errorCode?: string | null
+  inputValues?: Record<string, unknown>
+  beforeSnapshot?: ExecutionSnapshot
+  afterSnapshot?: ExecutionSnapshot
+  trace?: TraceRecord
+  ontologyGraph?: Record<string, unknown>
   values: Record<string, unknown>
   validationErrors: string[]
+}
+
+export interface ExecutionSnapshot {
+  phase: string
+  contextId: string
+  modelId: string
+  schemaVersion: number
+  workflowVersion: number
+  state: string
+  status: string
+  capturedAt: string
+  values: Record<string, unknown>
+  sha256: string
+}
+
+export interface TraceSpan {
+  id: string
+  traceId: string
+  name: string
+  startedAt: string
+  endedAt: string
+  durationMs: number
+  status: string
+  attributes: Record<string, string>
+}
+
+export interface TraceRecord {
+  runId: string
+  traceId: string
+  startedAt: string
+  endedAt: string
+  durationMs: number
+  status: string
+  sealed: boolean
+  spans: TraceSpan[]
+}
+
+export interface AuditEvent {
+  id: string
+  action: string
+  targetType: string
+  targetId: string
+  createdAt: string
+  details: string
+}
+
+export interface IdempotencyRecord {
+  scope: string
+  key: string
+  requestSha256: string
+  runId: string
+  createdAt: string
 }
 
 export interface EngineOverview {
@@ -121,6 +204,14 @@ export const engineApi = {
   ontologyTypes: () => request<OntologyType[]>('/api/ontology/types'),
   services: () => request<ServiceRegistration[]>('/api/services'),
   runs: () => request<RuntimeRun[]>('/api/runs'),
+  run: (runId: string) => request<RuntimeRun>(`/api/runs/${encodeURIComponent(runId)}`),
+  trace: (runId: string) => request<TraceRecord>(`/api/runs/${encodeURIComponent(runId)}/trace`),
+  snapshots: (runId: string) => request<ExecutionSnapshot[]>(`/api/runs/${encodeURIComponent(runId)}/snapshots`),
+  auditEvents: () => request<AuditEvent[]>('/api/audit-events'),
+  idempotencyRecords: () => request<IdempotencyRecord[]>('/api/idempotency-records'),
+  exportState: () => request<Record<string, unknown>>('/api/export'),
+  retry: (runId: string) => request<RuntimeRun>(`/api/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST', body: '{}' }),
+  rollback: (runId: string) => request<RuntimeRun>(`/api/runs/${encodeURIComponent(runId)}/rollback`, { method: 'POST', body: '{}' }),
   addField: (modelId: string, payload: { name: string; type: FieldType; required: boolean; defaultValue?: unknown }) =>
     request<EngineField>(`/api/models/${encodeURIComponent(modelId)}/fields`, {
       method: 'POST',

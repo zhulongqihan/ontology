@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { engineApi, type EngineField, type EngineModel, type EngineOverview, type EngineTransition, type FieldType, type OntologyType, type RuntimeRun, type ServiceRegistration } from './api'
+import { engineApi, type AuditEvent, type EngineField, type EngineModel, type EngineOverview, type EngineTransition, type ExecutionSnapshot, type FieldType, type IdempotencyRecord, type OntologyType, type RuntimeRun, type ServiceRegistration, type TraceRecord } from './api'
 
-type ViewKey = 'overview' | 'models' | 'schema' | 'workflow' | 'ontology' | 'services' | 'runtime'
+type ViewKey = 'overview' | 'models' | 'schema' | 'workflow' | 'ontology' | 'services' | 'runtime' | 'evidence'
 
 const navigation: Array<{ key: ViewKey; label: string; detail: string; mark: string }> = [
   { key: 'overview', label: '引擎总览', detail: '控制面状态', mark: '◎' },
@@ -11,6 +11,7 @@ const navigation: Array<{ key: ViewKey; label: string; detail: string; mark: str
   { key: 'ontology', label: '本体模型', detail: '对象与关系', mark: '◈' },
   { key: 'services', label: '服务注册', detail: 'Provider / Consumer', mark: '⌘' },
   { key: 'runtime', label: '运行调试', detail: '输入与快照', mark: '▶' },
+  { key: 'evidence', label: '证据中心', detail: 'Trace / 审计 / 导出', mark: '⌁' },
 ]
 
 function App() {
@@ -20,6 +21,8 @@ function App() {
   const [ontologyTypes, setOntologyTypes] = useState<OntologyType[]>([])
   const [services, setServices] = useState<ServiceRegistration[]>([])
   const [runs, setRuns] = useState<RuntimeRun[]>([])
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
+  const [idempotencyRecords, setIdempotencyRecords] = useState<IdempotencyRecord[]>([])
   const [selectedModelId, setSelectedModelId] = useState('interview-session')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -29,18 +32,22 @@ function App() {
     setLoading(true)
     setError('')
     try {
-      const [nextOverview, nextModels, nextOntologyTypes, nextServices, nextRuns] = await Promise.all([
+      const [nextOverview, nextModels, nextOntologyTypes, nextServices, nextRuns, nextAuditEvents, nextIdempotencyRecords] = await Promise.all([
         engineApi.overview(),
         engineApi.models(),
         engineApi.ontologyTypes(),
         engineApi.services(),
         engineApi.runs(),
+        engineApi.auditEvents(),
+        engineApi.idempotencyRecords(),
       ])
       setOverview(nextOverview)
       setModels(nextModels)
       setOntologyTypes(nextOntologyTypes)
       setServices(nextServices)
       setRuns(nextRuns)
+      setAuditEvents(nextAuditEvents)
+      setIdempotencyRecords(nextIdempotencyRecords)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '无法连接到引擎管理 API')
     } finally {
@@ -70,6 +77,21 @@ function App() {
       showNotice(success)
     } catch (reason) {
       showNotice(reason instanceof Error ? reason.message : '操作失败')
+    }
+  }
+
+  async function downloadExport() {
+    try {
+      const payload = await engineApi.exportState()
+      const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `engine-evidence-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+      anchor.click()
+      URL.revokeObjectURL(url)
+      showNotice('控制面证据已导出')
+    } catch (reason) {
+      showNotice(reason instanceof Error ? reason.message : '导出失败')
     }
   }
 
@@ -113,6 +135,7 @@ function App() {
           {activeView === 'ontology' && <OntologyView types={ontologyTypes} onAdd={(payload) => afterMutation(() => engineApi.addOntologyType(payload), '本体类型已写入模型注册表')} onAddRelation={(typeId, payload) => afterMutation(() => engineApi.addOntologyRelation(typeId, payload), '本体关系已写入对象模型')} />}
           {activeView === 'services' && <ServicesView services={services} onAdd={(payload) => afterMutation(() => engineApi.addService(payload), '服务已写入本地注册表')} />}
           {activeView === 'runtime' && selectedModel && <RuntimeView models={models} selectedModel={selectedModel} runs={runs} onExecute={async (payload) => { const run = await engineApi.execute(payload); await refresh(); showNotice('运行已完成，结果已持久化'); return run }} />}
+          {activeView === 'evidence' && <EvidenceView runs={runs} models={models} auditEvents={auditEvents} idempotencyRecords={idempotencyRecords} onRetry={(runId) => afterMutation(() => engineApi.retry(runId), '已创建新的重试运行')} onRollback={(runId) => afterMutation(() => engineApi.rollback(runId), '已创建回滚运行')} onExport={downloadExport} />}
         </div>
       </main>
       {notice && <div className="toast" role="status">{notice}</div>}
@@ -178,6 +201,44 @@ function ServicesView({ services, onAdd }: { services: ServiceRegistration[]; on
   return <><PageIntro eyebrow="SERVICE REGISTRY / LOCAL PROVIDERS" title="服务注册" description="查看兼容层中的 Provider、Assembler 和本地服务地址。服务注册是引擎调用链的一部分，不是实验报告数据。" action={<span className="version-badge">{services.length} SERVICES</span>} /><div className="content-grid admin-grid"><section className="panel"><PanelHeading kicker="REGISTERED SERVICES" title="服务目录" /><div className="service-table-wrap"><table className="admin-table service-table"><thead><tr><th>服务</th><th>Provider</th><th>状态</th><th>Endpoint</th><th>版本</th></tr></thead><tbody>{services.map((service) => <tr key={service.id}><td><strong>{service.name}</strong><small>{service.id}</small></td><td><code>{service.provider}</code></td><td><StatusPill status={service.status} /></td><td><code>{service.endpoint}</code></td><td><span className="version-badge">{service.version}</span></td></tr>)}</tbody></table></div></section><section className="panel form-panel"><PanelHeading kicker="REGISTER SERVICE" title="增加本地服务" /><form onSubmit={submit} className="admin-form"><label>服务 ID<input value={id} onChange={(event) => setId(event.target.value)} placeholder="assessment-provider" /></label><label>服务名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Assessment Provider" /></label><label>Provider<input value={provider} onChange={(event) => setProvider(event.target.value)} /></label><label>Endpoint<input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="local://assessment-provider" /></label><label>版本<input value={version} onChange={(event) => setVersion(event.target.value)} placeholder="v1" /></label><button type="submit" className="primary-button">注册服务</button></form></section></div><div className="info-callout"><span>i</span><p>当前服务为本地实现。真实生产注册中心不可用时，系统会明确使用 `local://` 地址，不会伪装成生产服务。</p></div></>
 }
 
+function EvidenceView({ runs, models, auditEvents, idempotencyRecords, onRetry, onRollback, onExport }: { runs: RuntimeRun[]; models: EngineModel[]; auditEvents: AuditEvent[]; idempotencyRecords: IdempotencyRecord[]; onRetry: (runId: string) => Promise<void>; onRollback: (runId: string) => Promise<void>; onExport: () => Promise<void> }) {
+  const [selectedRunId, setSelectedRunId] = useState(runs[0]?.id ?? '')
+  const [trace, setTrace] = useState<TraceRecord | null>(null)
+  const [snapshots, setSnapshots] = useState<ExecutionSnapshot[]>([])
+  const [loadingEvidence, setLoadingEvidence] = useState(false)
+  const [evidenceError, setEvidenceError] = useState('')
+  const selectedRun = runs.find((run) => run.id === selectedRunId) ?? runs[0]
+
+  useEffect(() => {
+    if (runs.length > 0 && !runs.some((run) => run.id === selectedRunId)) setSelectedRunId(runs[0].id)
+  }, [runs, selectedRunId])
+
+  useEffect(() => {
+    if (!selectedRun) {
+      setTrace(null)
+      setSnapshots([])
+      return
+    }
+    let active = true
+    setLoadingEvidence(true)
+    setEvidenceError('')
+    void Promise.all([engineApi.trace(selectedRun.id), engineApi.snapshots(selectedRun.id)])
+      .then(([nextTrace, nextSnapshots]) => { if (active) { setTrace(nextTrace); setSnapshots(nextSnapshots) } })
+      .catch((reason) => { if (active) setEvidenceError(reason instanceof Error ? reason.message : '证据加载失败') })
+      .finally(() => { if (active) setLoadingEvidence(false) })
+    return () => { active = false }
+  }, [selectedRun?.id])
+
+  return <>
+    <PageIntro eyebrow="EVIDENCE / CONTROL PLANE" title="运行证据中心" description="沿着一次运行查看版本绑定、前后快照、Trace Span、审计事件和幂等记录。所有数据来自引擎 API，可导出用于复核。" action={<button type="button" className="primary-button" onClick={() => void onExport()}>导出控制面 JSON</button>} />
+    <div className="evidence-layout">
+      <section className="panel evidence-run-panel"><PanelHeading kicker="RUN JOURNAL" title={`${runs.length} 条运行记录`} />{runs.length === 0 ? <EmptyState title="暂无运行证据" description="先到运行调试提交一次真实执行。" /> : <div className="evidence-run-list">{runs.map((run) => <button type="button" className={`evidence-run-row ${selectedRun?.id === run.id ? 'selected' : ''}`} key={run.id} onClick={() => setSelectedRunId(run.id)}><StatusPill status={run.status} /><span><strong>{run.id}</strong><small>{run.modelId} · {run.contextId}</small></span><code>v{run.schemaVersion ?? '—'} / w{run.workflowVersion ?? '—'}</code></button>)}</div>}</section>
+      <section className="panel evidence-detail-panel"><PanelHeading kicker="RUN EVIDENCE" title={selectedRun ? selectedRun.id : '选择一次运行'} action={selectedRun && <div className="evidence-actions"><button type="button" className="quiet-button" disabled={selectedRun.status !== 'FAILED'} onClick={() => void onRetry(selectedRun.id)}>重试</button><button type="button" className="quiet-button" disabled={selectedRun.status !== 'PASSED'} onClick={() => void onRollback(selectedRun.id)}>回滚</button></div>} />{!selectedRun ? <EmptyState title="选择运行记录" description="运行、快照和 Trace 会在这里展开。" /> : <div className="evidence-detail">{evidenceError && <div className="error-list">! {evidenceError}</div>}<div className="evidence-facts"><Fact label="data identity" value={selectedRun.dataIdentity} /><Fact label="engine / schema" value={`v${selectedRun.engineVersion ?? '—'} / v${selectedRun.schemaVersion ?? '—'}`} /><Fact label="workflow" value={`v${selectedRun.workflowVersion ?? '—'}`} /><Fact label="revision" value={String(selectedRun.contextRevision ?? '—')} /></div><div className="evidence-section"><div className="subheading"><strong>Snapshots</strong><span>{loadingEvidence ? '读取中…' : `${snapshots.length} 个封存快照`}</span></div><div className="snapshot-grid">{snapshots.map((snapshot) => <div className="snapshot-card" key={snapshot.phase}><div><StatusPill status={snapshot.phase} /><code>{shortHash(snapshot.sha256)}</code></div><strong>{snapshot.state}</strong><small>{snapshot.status} · {formatTime(snapshot.capturedAt)}</small><pre>{JSON.stringify(snapshot.values, null, 2)}</pre></div>)}</div></div><div className="evidence-section"><div className="subheading"><strong>Trace spans</strong><span>{trace?.sealed ? 'SEALED' : '—'} · {trace?.durationMs ?? selectedRun.durationMs} ms</span></div><div className="span-list">{(trace?.spans ?? []).map((span) => <div className="span-row" key={span.id}><code>{span.name}</code><StatusPill status={span.status} /><span>{span.durationMs} ms</span></div>)}</div></div></div>}</section>
+    </div>
+    <div className="evidence-grid"><section className="panel"><PanelHeading kicker="VERSION BINDINGS" title="模型版本" /><div className="version-list">{models.map((model) => <div className="version-row" key={model.id}><span><strong>{model.name}</strong><small>{model.id}</small></span><code>Schema v{model.schemaVersion} · Workflow v{model.workflowVersion}</code></div>)}</div></section><section className="panel"><PanelHeading kicker="AUDIT JOURNAL" title={`${auditEvents.length} 条审计事件`} /><div className="audit-list">{auditEvents.slice(0, 8).map((event) => <div className="audit-row" key={event.id}><StatusPill status="READY" /><span><strong>{event.action}</strong><small>{event.targetType} · {event.targetId}</small></span><code>{formatTime(event.createdAt)}</code></div>)}</div>{auditEvents.length === 0 && <EmptyState title="暂无审计事件" description="配置和回滚动作会追加审计记录。" />}</section><section className="panel"><PanelHeading kicker="IDEMPOTENCY" title={`${idempotencyRecords.length} 条幂等记录`} /><div className="audit-list">{idempotencyRecords.slice(0, 8).map((record) => <div className="audit-row" key={`${record.scope}-${record.key}`}><span><strong>{record.key}</strong><small>{record.scope} · {record.runId}</small></span><code>{shortHash(record.requestSha256)}</code></div>)}</div>{idempotencyRecords.length === 0 && <EmptyState title="暂无幂等键" description="带幂等键的运行请求会在这里留下绑定。" />}</section></div>
+  </>
+}
+
 function RuntimeView({ models, selectedModel, runs, onExecute }: { models: EngineModel[]; selectedModel: EngineModel; runs: RuntimeRun[]; onExecute: (payload: { modelId: string; contextId?: string; event: string; values: Record<string, unknown> }) => Promise<RuntimeRun> }) {
   const [modelId, setModelId] = useState(selectedModel.id); const currentModel = models.find((model) => model.id === modelId) ?? selectedModel; const [contextId, setContextId] = useState(''); const [event, setEvent] = useState(currentModel.transitions[0]?.event ?? ''); const [input, setInput] = useState(JSON.stringify(sampleFor(currentModel), null, 2)); const [running, setRunning] = useState(false); const [lastRun, setLastRun] = useState<RuntimeRun | null>(runs[0] ?? null);
   function changeModel(nextId: string) { const next = models.find((model) => model.id === nextId) ?? selectedModel; setModelId(nextId); setEvent(next.transitions[0]?.event ?? ''); setInput(JSON.stringify(sampleFor(next), null, 2)) }
@@ -197,6 +258,7 @@ function StatusPill({ status }: { status: string }) { const normalized = status.
 function EmptyState({ title, description }: { title: string; description: string }) { return <div className="empty-state"><span>∅</span><strong>{title}</strong><p>{description}</p></div> }
 function formatTime(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false }) }
 function splitCsv(value: string) { return value.split(',').map((item) => item.trim()).filter(Boolean) }
+function shortHash(value: string) { return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value }
 function sampleFor(model: EngineModel) { const values: Record<string, unknown> = {}; model.fields.forEach((field) => { if (field.defaultValue !== undefined && field.defaultValue !== null) values[field.name] = field.defaultValue; else if (field.required) values[field.name] = field.type === 'INTEGER' ? 95 : field.type === 'BOOLEAN' ? false : field.type === 'DECIMAL' ? 0.95 : field.type === 'JSON' ? {} : 'sample-value' }); return values }
 
 export default App

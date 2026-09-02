@@ -172,6 +172,11 @@ public final class EngineAdminServer {
             writeJson(exchange, 200, service.run(decode(segments.get(1))).getTrace());
             return;
         }
+        if (segments.size() == 3 && "runs".equals(segments.get(0)) && "snapshots".equals(segments.get(2))
+                && "GET".equals(method)) {
+            writeJson(exchange, 200, service.snapshots(decode(segments.get(1))));
+            return;
+        }
         if (segments.size() == 2 && "contexts".equals(segments.get(0)) && "GET".equals(method)) {
             writeJson(exchange, 200, service.context(decode(segments.get(1))));
             return;
@@ -182,6 +187,14 @@ public final class EngineAdminServer {
         }
         if (segments.size() == 1 && "audit-events".equals(segments.get(0)) && "GET".equals(method)) {
             writeJson(exchange, 200, service.auditEvents());
+            return;
+        }
+        if (segments.size() == 1 && "idempotency-records".equals(segments.get(0)) && "GET".equals(method)) {
+            writeJson(exchange, 200, service.idempotencyRecords());
+            return;
+        }
+        if (segments.size() == 1 && "export".equals(segments.get(0)) && "GET".equals(method)) {
+            writeJson(exchange, 200, service.exportState());
             return;
         }
         if (segments.size() == 2 && "runtime".equals(segments.get(0)) && "execute".equals(segments.get(1)) && "POST".equals(method)) {

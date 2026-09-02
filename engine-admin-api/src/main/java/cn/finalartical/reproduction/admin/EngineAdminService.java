@@ -291,6 +291,37 @@ public final class EngineAdminService {
         throw new IllegalArgumentException("run not found: " + runId);
     }
 
+    public synchronized List<ExecutionSnapshotRecord> snapshots(String runId) {
+        RuntimeRun run = run(runId);
+        List<ExecutionSnapshotRecord> result = new ArrayList<ExecutionSnapshotRecord>();
+        if (run.getBeforeSnapshot() != null) {
+            result.add(run.getBeforeSnapshot());
+        }
+        if (run.getAfterSnapshot() != null) {
+            result.add(run.getAfterSnapshot());
+        }
+        return result;
+    }
+
+    public synchronized List<IdempotencyRecord> idempotencyRecords() {
+        return new ArrayList<IdempotencyRecord>(state.getIdempotencyRecords());
+    }
+
+    public synchronized Map<String, Object> exportState() {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("exportedAt", Instant.now().toString());
+        result.put("dataIdentity", DATA_IDENTITY);
+        result.put("engine", overview().get("engine"));
+        result.put("models", models());
+        result.put("ontologyTypes", ontologyTypes());
+        result.put("services", services());
+        result.put("contexts", contexts());
+        result.put("runs", runs());
+        result.put("auditEvents", auditEvents());
+        result.put("idempotencyRecords", idempotencyRecords());
+        return result;
+    }
+
     public synchronized List<AuditEventRecord> auditEvents() {
         return new ArrayList<AuditEventRecord>(state.getAuditEvents());
     }

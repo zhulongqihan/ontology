@@ -135,11 +135,14 @@ npm.cmd run dev
 | `GET` | `/api/runs` | 查询运行历史 |
 | `GET` | `/api/runs/{id}` | 查询完整运行、前后快照和 Trace |
 | `GET` | `/api/runs/{id}/trace` | 查询 Trace Span 时间线 |
+| `GET` | `/api/runs/{id}/snapshots` | 查询运行前后封存快照 |
 | `POST` | `/api/runs/{id}/retry` | 重试失败 Run 并创建新的 attempt |
 | `POST` | `/api/runs/{id}/rollback` | 回滚仍处于最新上下文 revision 的成功 Run |
 | `GET` | `/api/contexts` | 查询运行上下文 |
 | `GET` | `/api/contexts/{id}` | 查询上下文当前状态 |
 | `GET` | `/api/audit-events` | 查询配置审计事件 |
+| `GET` | `/api/idempotency-records` | 查询幂等键与请求哈希绑定 |
+| `GET` | `/api/export` | 导出模型、运行、快照、Trace、审计和幂等证据 |
 | `POST` | `/api/runtime/execute` | 按模型 Schema 和工作流执行一次运行 |
 
 运行请求示例：
@@ -169,11 +172,11 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：37/37 通过。
+- Maven 多模块测试：40/40 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
-- 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行、SQLite 持久化和旧 JSON 迁移已完成实测。
+- 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行、快照/Trace/审计/幂等查询、重试回滚、SQLite 持久化和旧 JSON 迁移已完成实测。
 
 ## 论文与系统边界
 
@@ -195,7 +198,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 - 故障注入、更细粒度的并发冲突恢复和重试策略配置。
 - 请求—响应—Provider 的真实多服务调用链和更多 Trace 语义。
 - 本体关系装配的更多跨类型、跨服务和兼容场景。
-- 将运行快照、Trace、审计日志和论文导出纳入独立的实验支撑层，并与引擎领域数据保持清晰边界。
+- 将控制面导出升级为带格式版本的论文实验支撑层，并与引擎领域数据保持清晰边界。
 
 历史 JSON/SQLite 记录若生成于证据字段加入前，会保留为历史记录但显示为“旧记录/证据不完整”，不会被回填为当前运行结果。
 
