@@ -8,6 +8,9 @@ import cn.finalartical.reproduction.flexible.FlexibleEngine;
 import cn.finalartical.reproduction.flexible.UnknownFieldPolicy;
 import cn.finalartical.reproduction.flexible.WorkflowDefinition;
 import cn.finalartical.reproduction.flexible.WorkflowTransition;
+import cn.finalartical.reproduction.ontology.OntologyGraphValidator;
+import cn.finalartical.reproduction.ontology.OntologyRelationDefinition;
+import cn.finalartical.reproduction.ontology.OntologyTypeDefinition;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
@@ -489,13 +492,15 @@ final class EngineRuntimeService {
         Map<String, Object> graph = new LinkedHashMap<String, Object>();
         List<Map<String, Object>> objects = new ArrayList<Map<String, Object>>();
         List<Map<String, Object>> relations = new ArrayList<Map<String, Object>>();
+        Map<String, Object> rootAttributes = new LinkedHashMap<String, Object>(values);
         Map<String, Object> root = new LinkedHashMap<String, Object>();
         root.put("id", contextId);
         root.put("type", ontologyTypeId(modelId));
-        root.put("attributes", new LinkedHashMap<String, Object>(values));
+        root.put("attributes", rootAttributes);
         objects.add(root);
         Object subjects = values.get("subjects");
         if (subjects instanceof List) {
+            rootAttributes.put("subjectCount", ((List<?>) subjects).size());
             for (Object subjectItem : (List<?>) subjects) {
                 if (!(subjectItem instanceof Map)) {
                     throw new IllegalArgumentException("ontology subjects must be objects");
@@ -511,9 +516,13 @@ final class EngineRuntimeService {
                 subject.put("type", ontologyTypeId("subject"));
                 Map<String, Object> attributes = new LinkedHashMap<String, Object>();
                 attributes.put("title", title);
+                attributes.put("optionCount", optionsCount(source.get("options")));
                 subject.put("attributes", attributes);
                 objects.add(subject);
                 relations.add(edge(contextId, "containsSubject", subjectId));
+                rootAttributes.put("subject." + subjectId + ".title", title);
+                rootAttributes.put("subject." + subjectId + ".optionCount",
+                        optionsCount(source.get("options")));
                 Object options = source.get("options");
                 if (options instanceof List) {
                     for (Object optionItem : (List<?>) options) {
@@ -539,7 +548,22 @@ final class EngineRuntimeService {
         graph.put("rootObjectId", contextId);
         graph.put("objects", objects);
         graph.put("relations", relations);
+        new OntologyGraphValidator().validate(graph, ontologyDefinitions());
         return graph;
+    }
+
+    private List<OntologyTypeDefinition> ontologyDefinitions() {
+        List<OntologyTypeDefinition> definitions = new ArrayList<OntologyTypeDefinition>();
+        for (OntologyTypeConfig type : state.getOntologyTypes()) {
+            List<OntologyRelationDefinition> relations = new ArrayList<OntologyRelationDefinition>();
+            for (OntologyRelationConfig relation : type.getRelations()) {
+                relations.add(new OntologyRelationDefinition(relation.getName(), relation.getTargetType(),
+                        relation.getCardinality()));
+            }
+            definitions.add(new OntologyTypeDefinition(type.getId(), type.getLabel(), type.getFixedAttributes(),
+                    type.getDynamicAttributes(), relations));
+        }
+        return definitions;
     }
 
     private String ontologyTypeId(String requested) {
@@ -557,6 +581,10 @@ final class EngineRuntimeService {
         edge.put("relation", relation);
         edge.put("targetId", targetId);
         return edge;
+    }
+
+    private int optionsCount(Object options) {
+        return options instanceof List ? ((List<?>) options).size() : 0;
     }
 
     private int objectCount(Map<String, Object> graph) {

@@ -29,4 +29,13 @@ public class OntologyAssemblerTest {
 
         assertEquals(1, detail.getRelations().size());
     }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void duplicateSubjectIdsAreRejectedBeforeInstantiation() {
+        Questionnaire questionnaire = new Questionnaire("q-001", "重复题目", "subject-001")
+                .addSubject(new Subject("s-001", "第一题"))
+                .addSubject(new Subject("s-001", "第二题"));
+
+        new OntologyAssembler().assembleQuestionnaire(questionnaire, 1);
+    }
 }

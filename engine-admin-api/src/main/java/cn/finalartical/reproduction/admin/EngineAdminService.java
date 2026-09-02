@@ -1,6 +1,7 @@
 package cn.finalartical.reproduction.admin;
 
 import cn.finalartical.reproduction.flexible.FieldType;
+import cn.finalartical.reproduction.ontology.OntologyCardinality;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -32,6 +33,7 @@ public final class EngineAdminService {
         this.state = repository.load();
         boolean changed = migrateProductIdentity();
         changed = normalizeModelVersions() || changed;
+        changed = normalizeOntologyTypes() || changed;
         changed = normalizeContexts() || changed;
         if (changed) {
             touch(state);
@@ -201,7 +203,7 @@ public final class EngineAdminService {
         OntologyTypeConfig type = ontologyType(typeId);
         String name = requiredText(payload, "name");
         String targetType = requiredText(payload, "targetType");
-        String cardinality = requiredText(payload, "cardinality");
+        String cardinality = OntologyCardinality.parse(requiredText(payload, "cardinality")).getExpression();
         ontologyType(targetType);
         for (OntologyRelationConfig relation : type.getRelations()) {
             if (name.equals(relation.getName())) {
@@ -260,7 +262,7 @@ public final class EngineAdminService {
 
     private OntologyTypeConfig ontologyType(String typeId) {
         for (OntologyTypeConfig type : state.getOntologyTypes()) {
-            if (type.getId().equals(typeId)) {
+            if (type.getId().equals(typeId) || (type.getLabel() != null && type.getLabel().equalsIgnoreCase(typeId))) {
                 return type;
             }
         }
@@ -348,6 +350,25 @@ public final class EngineAdminService {
             }
             state.getContexts().add(context);
             changed = true;
+        }
+        return changed;
+    }
+
+    private boolean normalizeOntologyTypes() {
+        boolean changed = false;
+        for (OntologyTypeConfig type : state.getOntologyTypes()) {
+            if ("questionnaire".equals(type.getId()) && !type.getDynamicAttributes().contains("subjects")) {
+                type.getDynamicAttributes().add(0, "subjects");
+                changed = true;
+            }
+            if ("subject".equals(type.getId()) && !type.getDynamicAttributes().contains("optionCount")) {
+                type.getDynamicAttributes().add("optionCount");
+                changed = true;
+            }
+            if ("option".equals(type.getId()) && !type.getFixedAttributes().contains("label")) {
+                type.getFixedAttributes().add("label");
+                changed = true;
+            }
         }
         return changed;
     }

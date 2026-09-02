@@ -47,15 +47,18 @@ public final class DefaultEngineSeed {
         OntologyTypeConfig questionnaireType = new OntologyTypeConfig(
                 "questionnaire", "Questionnaire", "面试套卷本体对象");
         questionnaireType.setFixedAttributes(Arrays.asList("name", "subjectId"));
-        questionnaireType.setDynamicAttributes(Arrays.asList("subjectCount", "subject.*.title", "subject.*.optionCount"));
+        questionnaireType.setDynamicAttributes(Arrays.asList("subjects", "subjectCount", "subject.*.title", "subject.*.optionCount"));
         questionnaireType.getRelations().add(new OntologyRelationConfig("containsSubject", "Subject", "1:N"));
         state.getOntologyTypes().add(questionnaireType);
 
         OntologyTypeConfig subjectType = new OntologyTypeConfig("subject", "Subject", "套卷题目对象");
         subjectType.setFixedAttributes(Arrays.asList("title"));
+        subjectType.setDynamicAttributes(Arrays.asList("optionCount"));
         subjectType.getRelations().add(new OntologyRelationConfig("subjectContainsOption", "Option", "1:N"));
         state.getOntologyTypes().add(subjectType);
-        state.getOntologyTypes().add(new OntologyTypeConfig("option", "Option", "题目选项对象"));
+        OntologyTypeConfig optionType = new OntologyTypeConfig("option", "Option", "题目选项对象");
+        optionType.setFixedAttributes(Arrays.asList("label"));
+        state.getOntologyTypes().add(optionType);
 
         state.getServices().add(new ServiceRegistration(
                 "questionnaire-provider",

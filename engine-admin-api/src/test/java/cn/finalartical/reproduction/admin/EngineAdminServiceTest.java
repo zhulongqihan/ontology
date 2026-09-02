@@ -334,6 +334,72 @@ public class EngineAdminServiceTest {
         assertEquals("PASSED", run.getStatus());
         assertEquals(3, ((List<?>) run.getOntologyGraph().get("objects")).size());
         assertEquals(2, ((List<?>) run.getOntologyGraph().get("relations")).size());
+        Map<?, ?> root = (Map<?, ?>) ((List<?>) run.getOntologyGraph().get("objects")).get(0);
+        Map<?, ?> rootAttributes = (Map<?, ?>) root.get("attributes");
+        assertEquals(1, rootAttributes.get("subjectCount"));
+        assertEquals("集合", rootAttributes.get("subject.s-001.title"));
+    }
+
+    @Test
+    public void ontologyRuntimeRejectsConfiguredTargetTypeMismatch() throws Exception {
+        Path path = Files.createTempDirectory("engine-ontology-target").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> field = new LinkedHashMap<String, Object>();
+        field.put("name", "subjects");
+        field.put("type", "JSON");
+        service.addField("questionnaire", field);
+        service.ontologyTypes().get(0).getRelations().get(0).setTargetType("Option");
+
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("name", "目标类型校验");
+        values.put("subjectId", "s-001");
+        values.put("subjects", Arrays.<Object>asList(new LinkedHashMap<String, Object>() {{
+            put("id", "s-001"); put("title", "集合");
+        }}));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "questionnaire");
+        payload.put("contextId", "ctx-ontology-target");
+        payload.put("event", "publish");
+        payload.put("values", values);
+
+        RuntimeRun run = service.execute(payload);
+
+        assertEquals("FAILED", run.getStatus());
+        assertEquals("ONTOLOGY_ASSEMBLY_ERROR", run.getErrorCode());
+        assertTrue(run.getValidationErrors().get(0).contains("target type mismatch"));
+    }
+
+    @Test
+    public void ontologyRuntimeRejectsOneToOneCardinalityOverflow() throws Exception {
+        Path path = Files.createTempDirectory("engine-ontology-cardinality").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> field = new LinkedHashMap<String, Object>();
+        field.put("name", "subjects");
+        field.put("type", "JSON");
+        service.addField("questionnaire", field);
+        service.ontologyTypes().get(0).getRelations().get(0).setCardinality("1:1");
+
+        Map<String, Object> first = new LinkedHashMap<String, Object>();
+        first.put("id", "s-001");
+        first.put("title", "集合");
+        Map<String, Object> second = new LinkedHashMap<String, Object>();
+        second.put("id", "s-002");
+        second.put("title", "并发");
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("name", "基数校验");
+        values.put("subjectId", "s-001");
+        values.put("subjects", Arrays.<Object>asList(first, second));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "questionnaire");
+        payload.put("contextId", "ctx-ontology-cardinality");
+        payload.put("event", "publish");
+        payload.put("values", values);
+
+        RuntimeRun run = service.execute(payload);
+
+        assertEquals("FAILED", run.getStatus());
+        assertEquals("ONTOLOGY_ASSEMBLY_ERROR", run.getErrorCode());
+        assertTrue(run.getValidationErrors().get(0).contains("cardinality"));
     }
 
     private static List<String> spanNames(RuntimeRun run) {
