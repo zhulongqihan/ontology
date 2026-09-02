@@ -1,6 +1,6 @@
 param(
     [int]$Port = 8787,
-    [string]$StatePath = "data\engine-state.json"
+    [string]$StatePath = "data\flexible-engine.db"
 )
 
 $ErrorActionPreference = "Stop"

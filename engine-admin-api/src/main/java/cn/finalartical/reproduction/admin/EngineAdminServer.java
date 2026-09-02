@@ -33,7 +33,13 @@ public final class EngineAdminServer {
     }
 
     public static EngineAdminServer start(int port, Path statePath) throws IOException {
-        JsonEngineStateRepository repository = new JsonEngineStateRepository(statePath);
+        return start(port, new JsonEngineStateRepository(statePath));
+    }
+
+    public static EngineAdminServer start(int port, EngineStateRepository repository) throws IOException {
+        if (repository == null) {
+            throw new IllegalArgumentException("repository must not be null");
+        }
         EngineAdminService service = new EngineAdminService(repository);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         EngineAdminServer adminServer = new EngineAdminServer(server, service);

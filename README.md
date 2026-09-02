@@ -73,6 +73,7 @@ Provider / Consumer 兼容调用
 | `ontology-core` | 本体对象、关系和对象装配 | `Questionnaire`、`Subject`、`Option`、`OntologyAssembler` |
 | `compatibility-adapter` | 本地 Provider / Consumer 兼容行为 | `QuestionnaireServiceProvider` |
 | `engine-admin-api` | 引擎管理 API、状态仓库和运行时入口 | `EngineAdminServer`、`EngineAdminService` |
+| `engine-persistence` | SQLite 事务持久化、JSON 迁移和状态写入审计 | `SqliteEngineStateRepository` |
 | `experiment-runner` | 20 条契约规格的可重复回归执行 | `ContractExperimentRunner` |
 | `reproduction-app` | fat jar 启动入口 | `ReproductionApplication` |
 | `frontend` | 中文后台控制面 | `App.tsx`、`api.ts` |
@@ -96,7 +97,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar admin
 ./scripts/run-admin.ps1
 ```
 
-管理 API 默认监听 `http://127.0.0.1:8787`，只绑定本机地址。健康检查：
+管理 API 默认监听 `http://127.0.0.1:8787`，只绑定本机地址；默认将状态写入 `data/flexible-engine.db`。如果数据库首次为空且存在旧的 `data/engine-state.json`，启动时会先导入旧状态。健康检查：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8787/api/health
@@ -114,7 +115,7 @@ npm.cmd run dev
 
 打开 [http://127.0.0.1:5174/](http://127.0.0.1:5174/)。
 
-控制面中的新增模型、动态字段、状态转换、本体关系、服务注册和运行快照都会进入本地引擎状态，而不是只改变浏览器内存。
+控制面中的新增模型、动态字段、状态转换、本体关系、服务注册和运行快照都会进入本地引擎状态，而不是只改变浏览器内存。SQLite 写入在事务中完成，并保留状态写入审计记录；旧 JSON 只作为迁移入口，不再是默认运行仓库。
 
 ## 管理 API
 
@@ -159,11 +160,11 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：22/22 通过。
+- Maven 多模块测试：24/24 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
-- 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行和 JSON 持久化已完成实测。
+- 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行、SQLite 持久化和旧 JSON 迁移已完成实测。
 
 ## 论文数据口径与复现边界
 
@@ -178,7 +179,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前版本是论文级复现系统的可运行基础，不宣称已经对未知的原始系统实现做到 1:1 等价。仍需继续完善的工程能力包括：
 
-- 数据库事务和并发版本控制，替代当前 JSON 文件仓库。
+- SQLite 状态仓库第一切片已完成；仍需继续拆分模型、Schema、工作流、关系和运行记录的规范化表，并补充并发版本控制。
 - Schema 迁移规则、字段编辑/删除和版本回滚。
 - 运行重试、回滚、幂等和故障注入。
 - 请求—响应—Provider—Trace 的多 span 追踪。

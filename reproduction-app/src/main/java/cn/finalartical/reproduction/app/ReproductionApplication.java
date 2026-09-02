@@ -5,6 +5,8 @@ import cn.finalartical.reproduction.compatibility.JsfExAssessService;
 import cn.finalartical.reproduction.compatibility.OperationResult;
 import cn.finalartical.reproduction.compatibility.QuestionnaireServiceProvider;
 import cn.finalartical.reproduction.admin.EngineAdminServer;
+import cn.finalartical.reproduction.admin.EngineStateRepository;
+import cn.finalartical.reproduction.admin.JsonEngineStateRepository;
 import cn.finalartical.reproduction.experiment.ContractExperimentRunner;
 import cn.finalartical.reproduction.experiment.ExperimentRunReport;
 import cn.finalartical.reproduction.flexible.ContextSnapshot;
@@ -17,6 +19,7 @@ import cn.finalartical.reproduction.ontology.OntologyAssembler;
 import cn.finalartical.reproduction.ontology.Option;
 import cn.finalartical.reproduction.ontology.Questionnaire;
 import cn.finalartical.reproduction.ontology.Subject;
+import cn.finalartical.reproduction.persistence.SqliteEngineStateRepository;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -73,8 +76,12 @@ public final class ReproductionApplication {
             int port = args.length > 1 ? Integer.parseInt(args[1]) : 8787;
             Path statePath = args.length > 2
                     ? Paths.get(args[2])
-                    : Paths.get("data", "engine-state.json");
-            final EngineAdminServer server = EngineAdminServer.start(port, statePath);
+                    : Paths.get("data", "flexible-engine.db");
+            Path legacyJsonPath = Paths.get("data", "engine-state.json");
+            EngineStateRepository repository = statePath.toString().toLowerCase().endsWith(".json")
+                    ? new JsonEngineStateRepository(statePath)
+                    : new SqliteEngineStateRepository(statePath, legacyJsonPath);
+            final EngineAdminServer server = EngineAdminServer.start(port, repository);
             Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
                 @Override
                 public void run() {
@@ -83,6 +90,9 @@ public final class ReproductionApplication {
             }));
             System.out.println("admin_url=http://127.0.0.1:" + server.getPort());
             System.out.println("state_path=" + statePath.toAbsolutePath());
+            if (!statePath.toString().toLowerCase().endsWith(".json")) {
+                System.out.println("legacy_json_path=" + legacyJsonPath.toAbsolutePath());
+            }
             System.out.println("data_identity=" + cn.finalartical.reproduction.admin.EngineAdminService.DATA_IDENTITY);
             Thread.currentThread().join();
         } catch (InterruptedException exception) {

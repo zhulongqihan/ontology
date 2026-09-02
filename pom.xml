@@ -17,6 +17,7 @@
         <module>ontology-core</module>
         <module>compatibility-adapter</module>
         <module>engine-admin-api</module>
+        <module>engine-persistence</module>
         <module>experiment-runner</module>
         <module>reproduction-app</module>
     </modules>

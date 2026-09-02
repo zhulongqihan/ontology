@@ -8,6 +8,10 @@ frontend/*.d.ts
 frontend/*.tsbuildinfo
 output/playwright/
 data/engine-state.json
+data/flexible-engine.db
+data/flexible-engine.db-journal
+data/flexible-engine.db-wal
+data/flexible-engine.db-shm
 runs/*
 datasets/generated/*
 !runs/.gitkeep

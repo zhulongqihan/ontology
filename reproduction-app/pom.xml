@@ -33,6 +33,11 @@
         </dependency>
         <dependency>
             <groupId>cn.finalartical</groupId>
+            <artifactId>engine-persistence</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.finalartical</groupId>
             <artifactId>experiment-runner</artifactId>
             <version>${project.version}</version>
         </dependency>
