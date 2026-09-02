@@ -10,11 +10,21 @@ public final class WorkflowExecutor {
     private String currentState;
 
     public WorkflowExecutor(WorkflowDefinition definition) {
+        this(definition, definition == null ? null : definition.getInitialState());
+    }
+
+    public WorkflowExecutor(WorkflowDefinition definition, String initialState) {
         if (definition == null) {
             throw new IllegalArgumentException("workflow definition must not be null");
         }
+        if (initialState == null || initialState.trim().isEmpty()) {
+            throw new IllegalArgumentException("runtime state must not be blank");
+        }
+        if (!definition.containsState(initialState)) {
+            throw new IllegalArgumentException("runtime state is not part of workflow: " + initialState);
+        }
         this.definition = definition;
-        this.currentState = definition.getInitialState();
+        this.currentState = initialState;
         this.stateHistory.add(currentState);
     }
 

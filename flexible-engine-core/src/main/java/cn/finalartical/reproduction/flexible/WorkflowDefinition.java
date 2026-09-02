@@ -35,4 +35,16 @@ public final class WorkflowDefinition {
         }
         return null;
     }
+
+    public boolean containsState(String state) {
+        if (initialState.equals(state)) {
+            return true;
+        }
+        for (WorkflowTransition transition : transitions) {
+            if (transition.getFromState().equals(state) || transition.getToState().equals(state)) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

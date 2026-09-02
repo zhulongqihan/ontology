@@ -4,6 +4,7 @@ import cn.finalartical.reproduction.compatibility.InMemoryQuestionnaireRepositor
 import cn.finalartical.reproduction.compatibility.JsfExAssessService;
 import cn.finalartical.reproduction.compatibility.OperationResult;
 import cn.finalartical.reproduction.compatibility.QuestionnaireServiceProvider;
+import cn.finalartical.reproduction.admin.EngineAdminServer;
 import cn.finalartical.reproduction.experiment.ContractExperimentRunner;
 import cn.finalartical.reproduction.experiment.ExperimentRunReport;
 import cn.finalartical.reproduction.flexible.ContextSnapshot;
@@ -28,6 +29,10 @@ public final class ReproductionApplication {
     }
 
     public static void main(String[] args) {
+        if (args.length > 0 && "admin".equals(args[0])) {
+            runAdmin(args);
+            return;
+        }
         if (args.length > 0 && "contract".equals(args[0])) {
             runContractExperiment(args);
             return;
@@ -61,6 +66,30 @@ public final class ReproductionApplication {
         System.out.println("context.sha256=" + snapshot.getSha256());
         System.out.println("questionnaire.detail.status=" + detail.getStatus());
         System.out.println("questionnaire.detail.objectId=" + detail.getData().getClass().getSimpleName());
+    }
+
+    private static void runAdmin(String[] args) {
+        try {
+            int port = args.length > 1 ? Integer.parseInt(args[1]) : 8787;
+            Path statePath = args.length > 2
+                    ? Paths.get(args[2])
+                    : Paths.get("data", "engine-state.json");
+            final EngineAdminServer server = EngineAdminServer.start(port, statePath);
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    server.stop();
+                }
+            }));
+            System.out.println("admin_url=http://127.0.0.1:" + server.getPort());
+            System.out.println("state_path=" + statePath.toAbsolutePath());
+            System.out.println("data_identity=" + cn.finalartical.reproduction.admin.EngineAdminService.DATA_IDENTITY);
+            Thread.currentThread().join();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        } catch (Exception exception) {
+            throw new IllegalStateException("admin server failed", exception);
+        }
     }
 
     private static void runContractExperiment(String[] args) {
