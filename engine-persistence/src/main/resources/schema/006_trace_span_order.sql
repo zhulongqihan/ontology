@@ -1,0 +1,1 @@
+ALTER TABLE trace_span ADD COLUMN span_index INTEGER NOT NULL DEFAULT 0;

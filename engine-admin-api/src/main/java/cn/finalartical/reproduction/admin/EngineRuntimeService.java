@@ -396,7 +396,8 @@ final class EngineRuntimeService {
         }
         state.getAuditEvents().add(0, new AuditEventRecord(
                 "audit-" + UUID.randomUUID().toString().substring(0, 8), "RUN_ROLLED_BACK", "RuntimeRun",
-                runId, Instant.now().toString(), "rollbackRunId=" + rollbackRunId));
+                runId, Instant.now().toString(), "rollbackRunId=" + rollbackRunId,
+                state.getRevision(), state.getRevision() + 1L));
         while (state.getAuditEvents().size() > 200) {
             state.getAuditEvents().remove(state.getAuditEvents().size() - 1);
         }
@@ -512,16 +513,20 @@ final class EngineRuntimeService {
                     next.put(field.getName(), migrated.get(field.getName()));
                     continue;
                 }
-                boolean renamed = false;
+                SchemaMigrationRecord matchedRule = null;
                 for (SchemaMigrationRecord rule : model.getSchemaMigrations()) {
-                    if (rule.getToVersion() == version && field.getName().equals(rule.getTargetField())
-                            && migrated.containsKey(rule.getSourceField())) {
-                        next.put(field.getName(), migrated.get(rule.getSourceField()));
-                        renamed = true;
-                        break;
+                    if (rule.getFromVersion() == version - 1 && rule.getToVersion() == version
+                            && field.getName().equals(rule.getTargetField())) {
+                        if (matchedRule != null) {
+                            throw new IllegalStateException("ambiguous schema migration for " + field.getName()
+                                    + " at version " + version);
+                        }
+                        matchedRule = rule;
                     }
                 }
-                if (!renamed && field.getDefaultValue() != null) {
+                if (matchedRule != null && migrated.containsKey(matchedRule.getSourceField())) {
+                    next.put(field.getName(), migrated.get(matchedRule.getSourceField()));
+                } else if (field.getDefaultValue() != null) {
                     next.put(field.getName(), field.getDefaultValue());
                 }
             }

@@ -1,0 +1,2 @@
+ALTER TABLE audit_event ADD COLUMN before_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE audit_event ADD COLUMN after_revision INTEGER NOT NULL DEFAULT 0;

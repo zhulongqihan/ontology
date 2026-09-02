@@ -27,6 +27,18 @@ public final class DefaultEngineSeed {
         interview.getTransitions().add(new EngineTransition("PENDING_INTERVIEW", "startInterview", "IN_INTERVIEW"));
         interview.getTransitions().add(new EngineTransition("IN_INTERVIEW", "submitEvaluation", "COMPLETED"));
         interview.setUpdatedAt(state.getUpdatedAt());
+        interview.getSchemaVersions().add(new SchemaVersionRecord(1, state.getUpdatedAt(), Arrays.asList(
+                new EngineField("candidateName", "STRING", true, 1, null),
+                new EngineField("score", "INTEGER", false, 1, null))));
+        interview.getSchemaVersions().add(new SchemaVersionRecord(2, state.getUpdatedAt(), Arrays.asList(
+                new EngineField("candidateName", "STRING", true, 1, null),
+                new EngineField("score", "INTEGER", false, 1, null),
+                new EngineField("evaluationScore", "INTEGER", false, 2, null),
+                new EngineField("remote", "BOOLEAN", false, 2, false))));
+        interview.getWorkflowVersions().add(new WorkflowVersionRecord(1, state.getUpdatedAt(),
+                interview.getInitialState(), Arrays.asList(
+                new EngineTransition("PENDING_INTERVIEW", "startInterview", "IN_INTERVIEW"),
+                new EngineTransition("IN_INTERVIEW", "submitEvaluation", "COMPLETED"))));
         state.getModels().add(interview);
 
         EngineModel questionnaire = new EngineModel(
@@ -42,6 +54,14 @@ public final class DefaultEngineSeed {
         questionnaire.getTransitions().add(new EngineTransition("DRAFT", "publish", "PUBLISHED"));
         questionnaire.getTransitions().add(new EngineTransition("PUBLISHED", "archive", "ARCHIVED"));
         questionnaire.setUpdatedAt(state.getUpdatedAt());
+        questionnaire.getSchemaVersions().add(new SchemaVersionRecord(1, state.getUpdatedAt(), Arrays.asList(
+                new EngineField("name", "STRING", true, 1, null),
+                new EngineField("subjectId", "STRING", true, 1, null),
+                new EngineField("subjectCount", "INTEGER", false, 1, 0))));
+        questionnaire.getWorkflowVersions().add(new WorkflowVersionRecord(1, state.getUpdatedAt(),
+                questionnaire.getInitialState(), Arrays.asList(
+                new EngineTransition("DRAFT", "publish", "PUBLISHED"),
+                new EngineTransition("PUBLISHED", "archive", "ARCHIVED"))));
         state.getModels().add(questionnaire);
 
         OntologyTypeConfig questionnaireType = new OntologyTypeConfig(

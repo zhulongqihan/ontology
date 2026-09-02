@@ -7,17 +7,26 @@ public class AuditEventRecord {
     private String targetId;
     private String createdAt;
     private String details;
+    private long beforeRevision;
+    private long afterRevision;
 
     public AuditEventRecord() {
     }
 
     public AuditEventRecord(String id, String action, String targetType, String targetId, String createdAt, String details) {
+        this(id, action, targetType, targetId, createdAt, details, 0L, 0L);
+    }
+
+    public AuditEventRecord(String id, String action, String targetType, String targetId, String createdAt,
+                            String details, long beforeRevision, long afterRevision) {
         this.id = id;
         this.action = action;
         this.targetType = targetType;
         this.targetId = targetId;
         this.createdAt = createdAt;
         this.details = details;
+        this.beforeRevision = beforeRevision;
+        this.afterRevision = afterRevision;
     }
 
     public String getId() { return id; }
@@ -32,4 +41,8 @@ public class AuditEventRecord {
     public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
     public String getDetails() { return details; }
     public void setDetails(String details) { this.details = details; }
+    public long getBeforeRevision() { return beforeRevision; }
+    public void setBeforeRevision(long beforeRevision) { this.beforeRevision = beforeRevision; }
+    public long getAfterRevision() { return afterRevision; }
+    public void setAfterRevision(long afterRevision) { this.afterRevision = afterRevision; }
 }

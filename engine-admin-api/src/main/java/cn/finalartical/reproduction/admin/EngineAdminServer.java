@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ConcurrentModificationException;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 
 public final class EngineAdminServer {
@@ -66,26 +67,33 @@ public final class EngineAdminServer {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             addCors(exchange);
+            String traceId = requestTraceId(exchange);
+            exchange.getResponseHeaders().set("X-Trace-Id", traceId);
             if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(204, -1);
                 exchange.close();
                 return;
             }
             try {
-                dispatch(exchange);
+                synchronized (service) {
+                    requireIfMatch(exchange);
+                    dispatch(exchange, traceId);
+                }
+            } catch (PayloadTooLargeException exception) {
+                writeError(exchange, 413, "PAYLOAD_TOO_LARGE", exception.getMessage(), traceId);
             } catch (JsonProcessingException exception) {
-                writeError(exchange, 400, "invalid JSON payload: " + exception.getOriginalMessage());
-            } catch (IllegalArgumentException exception) {
-                writeError(exchange, 400, exception.getMessage());
+                writeError(exchange, 400, "INVALID_JSON", "invalid JSON payload: " + exception.getOriginalMessage(), traceId);
             } catch (ConcurrentModificationException exception) {
-                writeError(exchange, 409, exception.getMessage());
+                writeError(exchange, 409, "REVISION_CONFLICT", exception.getMessage(), traceId);
+            } catch (IllegalArgumentException exception) {
+                writeError(exchange, 400, "INVALID_ARGUMENT", exception.getMessage(), traceId);
             } catch (Exception exception) {
-                writeError(exchange, 500, exception.getMessage() == null ? "internal server error" : exception.getMessage());
+                writeError(exchange, 500, "INTERNAL_ERROR", "internal server error", traceId);
             }
         }
     }
 
-    private void dispatch(HttpExchange exchange) throws IOException {
+    private void dispatch(HttpExchange exchange, String traceId) throws IOException {
         String path = exchange.getRequestURI().getPath();
         String relative = path.substring("/api".length());
         while (relative.startsWith("/")) {
@@ -151,12 +159,22 @@ public final class EngineAdminServer {
             writeJson(exchange, 201, service.addOntologyRelation(decode(segments.get(2)), readPayload(exchange)));
             return;
         }
+        if (segments.size() == 5 && "ontology".equals(segments.get(0)) && "types".equals(segments.get(1))
+                && "relations".equals(segments.get(3)) && "PUT".equals(method)) {
+            writeJson(exchange, 200, service.updateOntologyRelation(decode(segments.get(2)),
+                    decode(segments.get(4)), readPayload(exchange)));
+            return;
+        }
         if (segments.size() == 1 && "services".equals(segments.get(0)) && "GET".equals(method)) {
             writeJson(exchange, 200, service.services());
             return;
         }
         if (segments.size() == 1 && "services".equals(segments.get(0)) && "POST".equals(method)) {
             writeJson(exchange, 201, service.addService(readPayload(exchange)));
+            return;
+        }
+        if (segments.size() == 2 && "services".equals(segments.get(0)) && "PUT".equals(method)) {
+            writeJson(exchange, 200, service.updateService(decode(segments.get(1)), readPayload(exchange)));
             return;
         }
         if (segments.size() == 1 && "runs".equals(segments.get(0)) && "GET".equals(method)) {
@@ -211,7 +229,7 @@ public final class EngineAdminServer {
             writeJson(exchange, 200, service.execute(readPayload(exchange)));
             return;
         }
-        writeError(exchange, 404, "route not found: " + method + " " + path);
+        writeError(exchange, 404, "ROUTE_NOT_FOUND", "route not found: " + method + " " + path, traceId);
     }
 
     private Map<String, Object> readPayload(HttpExchange exchange) throws IOException {
@@ -219,7 +237,11 @@ public final class EngineAdminServer {
         if (body.trim().isEmpty()) {
             return new LinkedHashMap<String, Object>();
         }
-        return mapper.readValue(body, new TypeReference<Map<String, Object>>() { });
+        Map<String, Object> payload = mapper.readValue(body, new TypeReference<Map<String, Object>>() { });
+        if (payload == null) {
+            throw new IllegalArgumentException("JSON object required");
+        }
+        return payload;
     }
 
     private String readBody(InputStream input) throws IOException {
@@ -227,20 +249,28 @@ public final class EngineAdminServer {
         byte[] chunk = new byte[4096];
         int length;
         while ((length = input.read(chunk)) != -1) {
+            if (buffer.size() + length > 1024 * 1024) {
+                throw new PayloadTooLargeException("request body exceeds 1 MiB");
+            }
             buffer.write(chunk, 0, length);
         }
         return new String(buffer.toByteArray(), StandardCharsets.UTF_8);
     }
 
-    private void writeError(HttpExchange exchange, int status, String message) throws IOException {
+    private void writeError(HttpExchange exchange, int status, String errorCode, String message, String traceId)
+            throws IOException {
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("error", message == null ? "unknown error" : message);
+        body.put("errorCode", errorCode);
+        body.put("message", message == null ? "unknown error" : message);
+        body.put("traceId", traceId);
         writeJson(exchange, status, body);
     }
 
     private void writeJson(HttpExchange exchange, int status, Object body) throws IOException {
         byte[] bytes = mapper.writeValueAsString(body).getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+        exchange.getResponseHeaders().set("ETag", "\"" + service.revision() + "\"");
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
@@ -248,11 +278,47 @@ public final class EngineAdminServer {
 
     private void addCors(HttpExchange exchange) {
         exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, X-Trace-Id");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
+    }
+
+    private String requestTraceId(HttpExchange exchange) {
+        String supplied = exchange.getRequestHeaders().getFirst("X-Trace-Id");
+        if (supplied != null && supplied.matches("[A-Za-z0-9._:-]{1,128}")) {
+            return supplied;
+        }
+        return "http-" + UUID.randomUUID().toString();
+    }
+
+    private void requireIfMatch(HttpExchange exchange) {
+        if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            return;
+        }
+        String value = exchange.getRequestHeaders().getFirst("If-Match");
+        if (value == null || value.trim().isEmpty() || "*".equals(value.trim())) {
+            return;
+        }
+        String normalized = value.trim();
+        if (normalized.startsWith("W/")) {
+            normalized = normalized.substring(2).trim();
+        }
+        if (normalized.length() >= 2 && normalized.startsWith("\"") && normalized.endsWith("\"")) {
+            normalized = normalized.substring(1, normalized.length() - 1);
+        }
+        try {
+            service.requireRevision(Long.parseLong(normalized));
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("If-Match must contain an engine revision");
+        }
     }
 
     private String decode(String value) throws IOException {
         return URLDecoder.decode(value, "UTF-8");
+    }
+
+    private static final class PayloadTooLargeException extends IOException {
+        private PayloadTooLargeException(String message) {
+            super(message);
+        }
     }
 }

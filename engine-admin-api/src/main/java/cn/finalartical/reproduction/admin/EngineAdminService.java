@@ -1,14 +1,19 @@
 package cn.finalartical.reproduction.admin;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import cn.finalartical.reproduction.flexible.FieldDefinition;
 import cn.finalartical.reproduction.flexible.FieldType;
 import cn.finalartical.reproduction.ontology.OntologyCardinality;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.ConcurrentModificationException;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public final class EngineAdminService {
@@ -24,6 +29,7 @@ public final class EngineAdminService {
     private final EngineStateRepository repository;
     private final EngineState state;
     private final EngineRuntimeService runtimeService;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public EngineAdminService(EngineStateRepository repository) {
         if (repository == null) {
@@ -35,6 +41,7 @@ public final class EngineAdminService {
         changed = normalizeModelVersions() || changed;
         changed = normalizeOntologyTypes() || changed;
         changed = normalizeContexts() || changed;
+        validateModelContracts();
         if (changed) {
             touch(state);
             save();
@@ -72,6 +79,7 @@ public final class EngineAdminService {
         engine.put("name", state.getEngineName());
         engine.put("version", state.getEngineVersion());
         engine.put("updatedAt", state.getUpdatedAt());
+        engine.put("revision", state.getRevision());
         engine.put("dataIdentity", DATA_IDENTITY);
         Map<String, Object> counts = new LinkedHashMap<String, Object>();
         counts.put("models", state.getModels().size());
@@ -81,15 +89,30 @@ public final class EngineAdminService {
         counts.put("runs", state.getRuns().size());
         result.put("engine", engine);
         result.put("counts", counts);
-        result.put("models", state.getModels());
+        result.put("models", models());
         result.put("recentRuns", recentRuns(5));
         result.put("capabilities", Arrays.asList(
                 "dynamic-schema", "workflow-runtime", "ontology-assembly", "local-provider"));
         return result;
     }
 
+    public synchronized long revision() {
+        return state.getRevision();
+    }
+
+    public synchronized void requireRevision(long expectedRevision) {
+        if (state.getRevision() != expectedRevision) {
+            throw new ConcurrentModificationException("engine state revision conflict: expected "
+                    + expectedRevision + " but was " + state.getRevision());
+        }
+    }
+
     public synchronized List<EngineModel> models() {
-        return new ArrayList<EngineModel>(state.getModels());
+        List<EngineModel> result = new ArrayList<EngineModel>();
+        for (EngineModel model : state.getModels()) {
+            result.add(copy(model, EngineModel.class));
+        }
+        return result;
     }
 
     public synchronized EngineModel addModel(Map<String, Object> payload) {
@@ -106,15 +129,23 @@ public final class EngineAdminService {
         EngineModel model = new EngineModel(id, requiredText(payload, "name"),
                 textValue(payload.get("description"), ""), 1, initialState);
         model.getStates().add(initialState);
-        model.setUpdatedAt(Instant.now().toString());
+        String publishedAt = Instant.now().toString();
+        model.setUpdatedAt(publishedAt);
+        model.getSchemaVersions().add(new SchemaVersionRecord(1, publishedAt, new ArrayList<EngineField>()));
+        model.getWorkflowVersions().add(new WorkflowVersionRecord(1, publishedAt, initialState,
+                new ArrayList<EngineTransition>()));
         state.getModels().add(model);
         appendAudit("MODEL_REGISTERED", "EngineModel", id, "model registered");
         touch(state);
         save();
-        return model;
+        return copy(model, EngineModel.class);
     }
 
     public synchronized EngineModel model(String modelId) {
+        return copy(modelRef(modelId), EngineModel.class);
+    }
+
+    private EngineModel modelRef(String modelId) {
         for (EngineModel model : state.getModels()) {
             if (model.getId().equals(modelId)) {
                 return model;
@@ -124,7 +155,7 @@ public final class EngineAdminService {
     }
 
     public synchronized EngineField addField(String modelId, Map<String, Object> payload) {
-        EngineModel model = model(modelId);
+        EngineModel model = modelRef(modelId);
         String name = requiredText(payload, "name");
         String type = requiredText(payload, "type").toUpperCase();
         try {
@@ -140,17 +171,18 @@ public final class EngineAdminService {
         int version = model.getSchemaVersion() + 1;
         EngineField field = new EngineField(name, type, booleanValue(payload.get("required"), false),
                 version, payload.get("defaultValue"));
+        validateDefaultValue(field);
         model.getFields().add(field);
         model.setSchemaVersion(version);
         model.getSchemaVersions().add(new SchemaVersionRecord(version, Instant.now().toString(), copyFields(model.getFields())));
         appendAudit("SCHEMA_PUBLISHED", "SchemaVersion", modelId + ":v" + version, "field added: " + name);
         touch(model);
         save();
-        return field;
+        return copy(field, EngineField.class);
     }
 
     public synchronized EngineField renameField(String modelId, Map<String, Object> payload) {
-        EngineModel model = model(modelId);
+        EngineModel model = modelRef(modelId);
         String sourceName = requiredText(payload, "sourceName");
         String targetName = requiredText(payload, "targetName");
         if (sourceName.equals(targetName)) {
@@ -184,11 +216,11 @@ public final class EngineAdminService {
                 "field renamed: " + sourceName + " -> " + targetName);
         touch(model);
         save();
-        return renamed;
+        return copy(renamed, EngineField.class);
     }
 
     public synchronized EngineModel removeField(String modelId, Map<String, Object> payload) {
-        EngineModel model = model(modelId);
+        EngineModel model = modelRef(modelId);
         String name = requiredText(payload, "name");
         EngineField removed = null;
         for (EngineField field : model.getFields()) {
@@ -208,11 +240,11 @@ public final class EngineAdminService {
                 "field removed: " + name);
         touch(model);
         save();
-        return model;
+        return copy(model, EngineModel.class);
     }
 
     public synchronized EngineTransition addTransition(String modelId, Map<String, Object> payload) {
-        EngineModel model = model(modelId);
+        EngineModel model = modelRef(modelId);
         String fromState = requiredText(payload, "fromState");
         String event = requiredText(payload, "event");
         String toState = requiredText(payload, "toState");
@@ -236,11 +268,15 @@ public final class EngineAdminService {
                 "transition added: " + event);
         touch(model);
         save();
-        return transition;
+        return copy(transition, EngineTransition.class);
     }
 
     public synchronized List<OntologyTypeConfig> ontologyTypes() {
-        return new ArrayList<OntologyTypeConfig>(state.getOntologyTypes());
+        List<OntologyTypeConfig> result = new ArrayList<OntologyTypeConfig>();
+        for (OntologyTypeConfig type : state.getOntologyTypes()) {
+            result.add(copy(type, OntologyTypeConfig.class));
+        }
+        return result;
     }
 
     public synchronized OntologyTypeConfig addOntologyType(Map<String, Object> payload) {
@@ -258,15 +294,15 @@ public final class EngineAdminService {
         appendAudit("ONTOLOGY_TYPE_REGISTERED", "OntologyType", id, "ontology type registered");
         touch(state);
         save();
-        return type;
+        return copy(type, OntologyTypeConfig.class);
     }
 
     public synchronized OntologyRelationConfig addOntologyRelation(String typeId, Map<String, Object> payload) {
-        OntologyTypeConfig type = ontologyType(typeId);
+        OntologyTypeConfig type = ontologyTypeRef(typeId);
         String name = requiredText(payload, "name");
         String targetType = requiredText(payload, "targetType");
         String cardinality = OntologyCardinality.parse(requiredText(payload, "cardinality")).getExpression();
-        ontologyType(targetType);
+        ontologyTypeRef(targetType);
         for (OntologyRelationConfig relation : type.getRelations()) {
             if (name.equals(relation.getName())) {
                 throw new IllegalArgumentException("ontology relation already exists: " + name);
@@ -278,11 +314,41 @@ public final class EngineAdminService {
                 "target=" + targetType + ", cardinality=" + cardinality);
         touch(state);
         save();
-        return relation;
+        return copy(relation, OntologyRelationConfig.class);
+    }
+
+    public synchronized OntologyRelationConfig updateOntologyRelation(String typeId, String relationName,
+                                                                       Map<String, Object> payload) {
+        OntologyTypeConfig type = ontologyTypeRef(typeId);
+        OntologyRelationConfig relation = null;
+        for (OntologyRelationConfig candidate : type.getRelations()) {
+            if (relationName.equals(candidate.getName())) {
+                relation = candidate;
+                break;
+            }
+        }
+        if (relation == null) {
+            throw new IllegalArgumentException("ontology relation not found: " + typeId + ":" + relationName);
+        }
+        String targetType = optionalText(payload, "targetType", relation.getTargetType());
+        String cardinality = OntologyCardinality.parse(optionalText(payload, "cardinality", relation.getCardinality()))
+                .getExpression();
+        ontologyTypeRef(targetType);
+        relation.setTargetType(targetType);
+        relation.setCardinality(cardinality);
+        appendAudit("ONTOLOGY_RELATION_UPDATED", "OntologyRelation", type.getId() + ":" + relationName,
+                "target=" + targetType + ", cardinality=" + cardinality);
+        touch(state);
+        save();
+        return copy(relation, OntologyRelationConfig.class);
     }
 
     public synchronized List<ServiceRegistration> services() {
-        return new ArrayList<ServiceRegistration>(state.getServices());
+        List<ServiceRegistration> result = new ArrayList<ServiceRegistration>();
+        for (ServiceRegistration service : state.getServices()) {
+            result.add(copy(service, ServiceRegistration.class));
+        }
+        return result;
     }
 
     public synchronized ServiceRegistration addService(Map<String, Object> payload) {
@@ -303,26 +369,44 @@ public final class EngineAdminService {
         appendAudit("SERVICE_REGISTERED", "Service", id, "endpoint=" + service.getEndpoint());
         touch(state);
         save();
-        return service;
+        return copy(service, ServiceRegistration.class);
+    }
+
+    public synchronized ServiceRegistration updateService(String serviceId, Map<String, Object> payload) {
+        ServiceRegistration service = serviceRef(serviceId);
+        service.setName(optionalText(payload, "name", service.getName()));
+        service.setProvider(optionalText(payload, "provider", service.getProvider()));
+        service.setStatus(optionalText(payload, "status", service.getStatus()));
+        service.setEndpoint(optionalText(payload, "endpoint", service.getEndpoint()));
+        service.setVersion(optionalText(payload, "version", service.getVersion()));
+        appendAudit("SERVICE_UPDATED", "Service", serviceId,
+                "provider=" + service.getProvider() + ", status=" + service.getStatus());
+        touch(state);
+        save();
+        return copy(service, ServiceRegistration.class);
     }
 
     public synchronized List<RuntimeRun> runs() {
-        return new ArrayList<RuntimeRun>(state.getRuns());
+        List<RuntimeRun> result = new ArrayList<RuntimeRun>();
+        for (RuntimeRun run : state.getRuns()) {
+            result.add(copy(run, RuntimeRun.class));
+        }
+        return result;
     }
 
     public synchronized RuntimeRun execute(Map<String, Object> payload) {
-        return runtimeService.execute(payload);
+        return copy(runtimeService.execute(payload), RuntimeRun.class);
     }
 
     public synchronized RuntimeRun retry(String runId) {
-        return runtimeService.retry(runId);
+        return copy(runtimeService.retry(runId), RuntimeRun.class);
     }
 
     public synchronized RuntimeRun rollback(String runId) {
-        return runtimeService.rollback(runId);
+        return copy(runtimeService.rollback(runId), RuntimeRun.class);
     }
 
-    private OntologyTypeConfig ontologyType(String typeId) {
+    private OntologyTypeConfig ontologyTypeRef(String typeId) {
         for (OntologyTypeConfig type : state.getOntologyTypes()) {
             if (type.getId().equals(typeId) || (type.getLabel() != null && type.getLabel().equalsIgnoreCase(typeId))) {
                 return type;
@@ -331,7 +415,32 @@ public final class EngineAdminService {
         throw new IllegalArgumentException("ontology type not found: " + typeId);
     }
 
+    private ServiceRegistration serviceRef(String serviceId) {
+        for (ServiceRegistration service : state.getServices()) {
+            if (serviceId.equals(service.getId())) {
+                return service;
+            }
+        }
+        throw new IllegalArgumentException("service not found: " + serviceId);
+    }
+
     public synchronized RuntimeContextRecord context(String contextId) {
+        return copy(contextRef(contextId), RuntimeContextRecord.class);
+    }
+
+    public synchronized List<RuntimeContextRecord> contexts() {
+        List<RuntimeContextRecord> result = new ArrayList<RuntimeContextRecord>();
+        for (RuntimeContextRecord context : state.getContexts()) {
+            result.add(copy(context, RuntimeContextRecord.class));
+        }
+        return result;
+    }
+
+    public synchronized RuntimeRun run(String runId) {
+        return copy(runRef(runId), RuntimeRun.class);
+    }
+
+    private RuntimeContextRecord contextRef(String contextId) {
         for (RuntimeContextRecord context : state.getContexts()) {
             if (contextId.equals(context.getContextId())) {
                 return context;
@@ -340,11 +449,7 @@ public final class EngineAdminService {
         throw new IllegalArgumentException("context not found: " + contextId);
     }
 
-    public synchronized List<RuntimeContextRecord> contexts() {
-        return new ArrayList<RuntimeContextRecord>(state.getContexts());
-    }
-
-    public synchronized RuntimeRun run(String runId) {
+    private RuntimeRun runRef(String runId) {
         for (RuntimeRun run : state.getRuns()) {
             if (runId.equals(run.getId())) {
                 return run;
@@ -354,19 +459,23 @@ public final class EngineAdminService {
     }
 
     public synchronized List<ExecutionSnapshotRecord> snapshots(String runId) {
-        RuntimeRun run = run(runId);
+        RuntimeRun run = runRef(runId);
         List<ExecutionSnapshotRecord> result = new ArrayList<ExecutionSnapshotRecord>();
         if (run.getBeforeSnapshot() != null) {
-            result.add(run.getBeforeSnapshot());
+            result.add(copy(run.getBeforeSnapshot(), ExecutionSnapshotRecord.class));
         }
         if (run.getAfterSnapshot() != null) {
-            result.add(run.getAfterSnapshot());
+            result.add(copy(run.getAfterSnapshot(), ExecutionSnapshotRecord.class));
         }
         return result;
     }
 
     public synchronized List<IdempotencyRecord> idempotencyRecords() {
-        return new ArrayList<IdempotencyRecord>(state.getIdempotencyRecords());
+        List<IdempotencyRecord> result = new ArrayList<IdempotencyRecord>();
+        for (IdempotencyRecord record : state.getIdempotencyRecords()) {
+            result.add(copy(record, IdempotencyRecord.class));
+        }
+        return result;
     }
 
     public synchronized Map<String, Object> exportState() {
@@ -385,7 +494,11 @@ public final class EngineAdminService {
     }
 
     public synchronized List<AuditEventRecord> auditEvents() {
-        return new ArrayList<AuditEventRecord>(state.getAuditEvents());
+        List<AuditEventRecord> result = new ArrayList<AuditEventRecord>();
+        for (AuditEventRecord event : state.getAuditEvents()) {
+            result.add(copy(event, AuditEventRecord.class));
+        }
+        return result;
     }
 
     private boolean normalizeModelVersions() {
@@ -424,6 +537,93 @@ public final class EngineAdminService {
             }
         }
         return changed;
+    }
+
+    private void validateModelContracts() {
+        for (EngineModel model : state.getModels()) {
+            if (model.getId() == null || model.getId().trim().isEmpty()) {
+                throw new IllegalStateException("model id must not be blank");
+            }
+            if (model.getSchemaVersion() < 1 || model.getSchemaVersions().isEmpty()) {
+                throw new IllegalStateException("model has no valid schema history: " + model.getId());
+            }
+            Map<Integer, SchemaVersionRecord> schemas = new LinkedHashMap<Integer, SchemaVersionRecord>();
+            for (SchemaVersionRecord schema : model.getSchemaVersions()) {
+                if (schema.getVersion() < 1 || schemas.put(schema.getVersion(), schema) != null) {
+                    throw new IllegalStateException("duplicate schema version in model: " + model.getId());
+                }
+                Set<String> fieldNames = new HashSet<String>();
+                for (EngineField field : schema.getFields()) {
+                    if (!fieldNames.add(field.getName())) {
+                        throw new IllegalStateException("duplicate field " + field.getName()
+                                + " in schema " + model.getId() + ":v" + schema.getVersion());
+                    }
+                    if (field.getVersion() > schema.getVersion()) {
+                        throw new IllegalStateException("field version is newer than its schema: "
+                                + model.getId() + ":" + field.getName());
+                    }
+                    validateDefaultValue(field);
+                }
+            }
+            for (int version = 1; version <= model.getSchemaVersion(); version++) {
+                if (!schemas.containsKey(version)) {
+                    throw new IllegalStateException("missing schema version " + version + " in model: " + model.getId());
+                }
+            }
+            for (SchemaMigrationRecord migration : model.getSchemaMigrations()) {
+                if (migration.getFromVersion() < 1 || migration.getToVersion() != migration.getFromVersion() + 1
+                        || !schemas.containsKey(migration.getFromVersion())
+                        || !schemas.containsKey(migration.getToVersion())) {
+                    throw new IllegalStateException("non-adjacent schema migration in model: " + model.getId());
+                }
+                if (!containsField(schemas.get(migration.getFromVersion()), migration.getSourceField())
+                        || !containsField(schemas.get(migration.getToVersion()), migration.getTargetField())) {
+                    throw new IllegalStateException("schema migration references an unknown field in model: "
+                            + model.getId());
+                }
+            }
+            if (model.getWorkflowVersion() < 1 || model.getWorkflowVersions().isEmpty()) {
+                throw new IllegalStateException("model has no valid workflow history: " + model.getId());
+            }
+            Map<Integer, WorkflowVersionRecord> workflows = new LinkedHashMap<Integer, WorkflowVersionRecord>();
+            for (WorkflowVersionRecord workflow : model.getWorkflowVersions()) {
+                if (workflow.getVersion() < 1 || workflows.put(workflow.getVersion(), workflow) != null) {
+                    throw new IllegalStateException("duplicate workflow version in model: " + model.getId());
+                }
+                Set<String> transitions = new HashSet<String>();
+                for (EngineTransition transition : workflow.getTransitions()) {
+                    String key = transition.getFromState() + "\u0000" + transition.getEvent();
+                    if (!transitions.add(key)) {
+                        throw new IllegalStateException("duplicate workflow transition in model: " + model.getId());
+                    }
+                }
+            }
+            for (int version = 1; version <= model.getWorkflowVersion(); version++) {
+                if (!workflows.containsKey(version)) {
+                    throw new IllegalStateException("missing workflow version " + version + " in model: " + model.getId());
+                }
+            }
+        }
+    }
+
+    private static boolean containsField(SchemaVersionRecord schema, String name) {
+        for (EngineField field : schema.getFields()) {
+            if (name.equals(field.getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void validateDefaultValue(EngineField field) {
+        if (field.getDefaultValue() == null) {
+            return;
+        }
+        FieldDefinition definition = new FieldDefinition(field.getName(), FieldType.valueOf(field.getType()),
+                field.isRequired(), field.getVersion(), field.getDefaultValue());
+        if (definition.validate(field.getDefaultValue()).isPresent()) {
+            throw new IllegalArgumentException("default value does not match field type: " + field.getName());
+        }
     }
 
     private boolean normalizeContexts() {
@@ -478,7 +678,7 @@ public final class EngineAdminService {
     private void appendAudit(String action, String targetType, String targetId, String details) {
         state.getAuditEvents().add(0, new AuditEventRecord(
                 "audit-" + UUID.randomUUID().toString().substring(0, 8), action, targetType, targetId,
-                Instant.now().toString(), details));
+                Instant.now().toString(), details, state.getRevision(), state.getRevision() + 1L));
         while (state.getAuditEvents().size() > 200) {
             state.getAuditEvents().remove(state.getAuditEvents().size() - 1);
         }
@@ -513,7 +713,11 @@ public final class EngineAdminService {
     }
 
     private List<RuntimeRun> recentRuns(int limit) {
-        return new ArrayList<RuntimeRun>(state.getRuns().subList(0, Math.min(limit, state.getRuns().size())));
+        List<RuntimeRun> result = new ArrayList<RuntimeRun>();
+        for (RuntimeRun run : state.getRuns().subList(0, Math.min(limit, state.getRuns().size()))) {
+            result.add(copy(run, RuntimeRun.class));
+        }
+        return result;
     }
 
     private void touch(EngineModel model) {
@@ -568,6 +772,21 @@ public final class EngineAdminService {
 
     private static boolean booleanValue(Object value, boolean fallback) {
         return value == null ? fallback : Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    private static String optionalText(Map<String, Object> payload, String key, String fallback) {
+        if (payload == null || payload.get(key) == null) {
+            return fallback;
+        }
+        String value = String.valueOf(payload.get(key)).trim();
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException(key + " must not be empty");
+        }
+        return value;
+    }
+
+    private <T> T copy(T value, Class<T> type) {
+        return mapper.convertValue(value, type);
     }
 
     private static List<String> stringList(Object value) {

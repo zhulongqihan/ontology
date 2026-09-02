@@ -29,7 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 public final class SqliteEngineStateRepository implements EngineStateRepository {
-    private static final int SCHEMA_VERSION = 5;
+    private static final int SCHEMA_VERSION = 7;
 
     private final Path databasePath;
     private final Path legacyJsonPath;
@@ -195,6 +195,28 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 try (PreparedStatement insert = connection.prepareStatement(
                         "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
                     insert.setInt(1, 5);
+                    insert.setString(2, Instant.now().toString());
+                    insert.executeUpdate();
+                }
+            }
+            if (!hasVersion(connection, 6)) {
+                for (String sql : readMigration("/schema/006_trace_span_order.sql")) {
+                    if (!sql.trim().isEmpty()) statement.execute(sql);
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
+                    insert.setInt(1, 6);
+                    insert.setString(2, Instant.now().toString());
+                    insert.executeUpdate();
+                }
+            }
+            if (!hasVersion(connection, 7)) {
+                for (String sql : readMigration("/schema/007_audit_revision_chain.sql")) {
+                    if (!sql.trim().isEmpty()) statement.execute(sql);
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
+                    insert.setInt(1, 7);
                     insert.setString(2, Instant.now().toString());
                     insert.executeUpdate();
                 }
@@ -394,11 +416,12 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         }
 
         try (PreparedStatement insert = connection.prepareStatement(
-                "INSERT INTO trace_span(span_id, trace_id, name, started_at, ended_at, duration_ms, status, attributes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                "INSERT INTO trace_span(span_id, trace_id, name, started_at, ended_at, duration_ms, status, attributes_json, span_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
             for (cn.finalartical.reproduction.admin.RuntimeRun run : state.getRuns()) {
                 if (run.getId() == null) continue;
                 cn.finalartical.reproduction.admin.TraceRecord trace = run.getTrace();
                 if (trace == null) continue;
+                int spanIndex = 0;
                 for (cn.finalartical.reproduction.admin.TraceSpanRecord span : trace.getSpans()) {
                     insert.setString(1, span.getSpanId());
                     insert.setString(2, span.getTraceId());
@@ -408,6 +431,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                     insert.setLong(6, span.getDurationMs());
                     insert.setString(7, span.getStatus());
                     insert.setString(8, json(span.getAttributes()));
+                    insert.setInt(9, spanIndex++);
                     insert.addBatch();
                 }
             }
@@ -415,7 +439,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         }
 
         try (PreparedStatement insert = connection.prepareStatement(
-                "INSERT INTO audit_event(audit_id, action, target_type, target_id, created_at, details) VALUES (?, ?, ?, ?, ?, ?)")) {
+                "INSERT INTO audit_event(audit_id, action, target_type, target_id, created_at, details, before_revision, after_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
             for (cn.finalartical.reproduction.admin.AuditEventRecord event : state.getAuditEvents()) {
                 insert.setString(1, event.getId());
                 insert.setString(2, event.getAction());
@@ -423,6 +447,8 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 insert.setString(4, event.getTargetId());
                 insert.setString(5, event.getCreatedAt());
                 insert.setString(6, event.getDetails());
+                insert.setLong(7, event.getBeforeRevision());
+                insert.setLong(8, event.getAfterRevision());
                 insert.addBatch();
             }
             insert.executeBatch();
@@ -846,6 +872,34 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                             + "WHERE w.model_id IS NULL",
                     "engine_model points to a missing current workflow definition");
             assertNoRows(connection,
+                    "WITH RECURSIVE expected(model_id, version, max_version) AS ("
+                            + " SELECT model_id, 1, schema_version FROM engine_model WHERE schema_version >= 1"
+                            + " UNION ALL SELECT model_id, version + 1, max_version FROM expected WHERE version < max_version)"
+                            + " SELECT e.model_id || ':v' || e.version FROM expected e"
+                            + " LEFT JOIN schema_definition s ON s.model_id = e.model_id AND s.schema_version = e.version"
+                            + " WHERE s.model_id IS NULL",
+                    "schema history has a missing version");
+            assertNoRows(connection,
+                    "WITH RECURSIVE expected(model_id, version, max_version) AS ("
+                            + " SELECT model_id, 1, workflow_version FROM engine_model WHERE workflow_version >= 1"
+                            + " UNION ALL SELECT model_id, version + 1, max_version FROM expected WHERE version < max_version)"
+                            + " SELECT e.model_id || ':v' || e.version FROM expected e"
+                            + " LEFT JOIN workflow_definition w ON w.model_id = e.model_id AND w.workflow_version = e.version"
+                            + " WHERE w.model_id IS NULL",
+                    "workflow history has a missing version");
+            assertNoRows(connection,
+                    "SELECT model_id || ':v' || schema_version || ':' || field_name FROM schema_field "
+                            + "WHERE field_version > schema_version",
+                    "schema_field version is newer than its schema definition");
+            assertNoRows(connection,
+                    "SELECT m.model_id || ':' || m.source_field || '->' || m.target_field FROM schema_migration m "
+                            + "WHERE m.to_version <> m.from_version + 1 "
+                            + "OR NOT EXISTS (SELECT 1 FROM schema_field f WHERE f.model_id = m.model_id "
+                            + "AND f.schema_version = m.from_version AND f.field_name = m.source_field) "
+                            + "OR NOT EXISTS (SELECT 1 FROM schema_field f WHERE f.model_id = m.model_id "
+                            + "AND f.schema_version = m.to_version AND f.field_name = m.target_field)",
+                    "schema_migration does not describe an adjacent field rename");
+            assertNoRows(connection,
                 "SELECT r.ontology_type_id || ':' || r.relation_name FROM ontology_relation r "
                             + "LEFT JOIN ontology_type target ON target.ontology_type_id = r.target_type "
                             + "OR lower(target.label) = lower(r.target_type) "
@@ -875,12 +929,22 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                             + "JOIN runtime_context c ON c.context_id = r.context_id "
                             + "WHERE c.model_id <> r.model_id",
                     "runtime_run model does not match its runtime context");
+            assertNoRows(connection,
+                    "SELECT r.run_id FROM runtime_run r "
+                            + "LEFT JOIN trace t ON t.trace_id = r.trace_id AND t.run_id = r.run_id "
+                            + "WHERE t.trace_id IS NULL",
+                    "runtime_run points to a mismatched trace");
+            assertNoRows(connection,
+                    "SELECT c.context_id FROM runtime_context c "
+                            + "LEFT JOIN runtime_run r ON r.run_id = c.last_run_id "
+                            + "WHERE c.last_run_id IS NOT NULL AND (r.run_id IS NULL OR r.context_id <> c.context_id)",
+                    "runtime_context points to a mismatched last run");
         }
         assertNoRows(connection,
                 "SELECT snapshot_id FROM execution_snapshot s "
                         + "LEFT JOIN runtime_run r ON r.run_id = s.run_id "
-                        + "WHERE r.run_id IS NULL",
-                "execution_snapshot points to a missing runtime run");
+                        + "WHERE r.run_id IS NULL OR s.context_id <> r.context_id OR s.model_id <> r.model_id",
+                "execution_snapshot does not match its runtime run");
         assertNoRows(connection,
                 "SELECT t.trace_id FROM trace t "
                         + "LEFT JOIN runtime_run r ON r.run_id = t.run_id "
@@ -889,13 +953,18 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         assertNoRows(connection,
                 "SELECT s.span_id FROM trace_span s "
                         + "LEFT JOIN trace t ON t.trace_id = s.trace_id "
-                        + "WHERE t.trace_id IS NULL",
-                "trace_span points to a missing trace");
+                        + "WHERE t.trace_id IS NULL OR s.duration_ms < 0 OR s.span_index < 0",
+                "trace_span is detached or has a negative duration");
         assertNoRows(connection,
                 "SELECT i.scope || ':' || i.idempotency_key FROM idempotency_record i "
                         + "LEFT JOIN runtime_run r ON r.run_id = i.run_id "
                         + "WHERE r.run_id IS NULL",
                 "idempotency_record points to a missing runtime run");
+        assertNoRows(connection,
+                "SELECT audit_id FROM audit_event "
+                        + "WHERE before_revision < 0 OR after_revision < before_revision "
+                        + "OR after_revision > (SELECT revision FROM engine_state WHERE state_id = 1)",
+                "audit_event is outside the engine revision chain");
         try (Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("PRAGMA foreign_key_check")) {
             if (result.next()) {
@@ -1035,7 +1104,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         if (rowCount(connection, "trace_span") > 0 && !traces.isEmpty()) {
             try (PreparedStatement query = connection.prepareStatement(
                     "SELECT span_id, trace_id, name, started_at, ended_at, duration_ms, status, attributes_json "
-                            + "FROM trace_span ORDER BY started_at")) {
+                            + ", span_index FROM trace_span ORDER BY trace_id, span_index, rowid")) {
                 try (ResultSet result = query.executeQuery()) {
                     while (result.next()) {
                         cn.finalartical.reproduction.admin.TraceRecord trace = traces.get(result.getString("trace_id"));
@@ -1054,12 +1123,14 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         if (rowCount(connection, "audit_event") > 0) {
             List<cn.finalartical.reproduction.admin.AuditEventRecord> events = new ArrayList<cn.finalartical.reproduction.admin.AuditEventRecord>();
             try (PreparedStatement query = connection.prepareStatement(
-                    "SELECT audit_id, action, target_type, target_id, created_at, details FROM audit_event ORDER BY created_at DESC")) {
+                    "SELECT audit_id, action, target_type, target_id, created_at, details, before_revision, after_revision "
+                            + "FROM audit_event ORDER BY created_at DESC, rowid DESC")) {
                 try (ResultSet result = query.executeQuery()) {
                     while (result.next()) {
                         events.add(new cn.finalartical.reproduction.admin.AuditEventRecord(result.getString("audit_id"),
                                 result.getString("action"), result.getString("target_type"), result.getString("target_id"),
-                                result.getString("created_at"), result.getString("details")));
+                                result.getString("created_at"), result.getString("details"),
+                                result.getLong("before_revision"), result.getLong("after_revision")));
                     }
                 }
             }

@@ -45,6 +45,10 @@ Provider / Consumer 兼容调用
 - 状态持久化：配置和运行历史默认保存到 SQLite `data/flexible-engine.db`；配置域同步写入模型、Schema、Workflow、本体和服务规范化表，运行域事实同步写入 `runtime_context`、`runtime_run`、`execution_snapshot`、`trace`、`trace_span`、`audit_event` 和 `idempotency_record` 表，重启后重新加载。
 - 控制面前端：引擎总览、模型管理、Schema/字段、工作流、本体模型、服务注册和运行调试。
 - 契约回归：20 条接口契约规格、逐用例结果、由真实 Provider 调用测量生成的封存 Trace、报告和哈希输出。
+- 架构边界：管理读取结果全部深拷贝；关系和服务状态只能通过受控、审计化命令更新，避免 DTO 嵌套对象绕过版本和持久化。
+- HTTP 并发与错误协议：响应返回 `ETag` 和 `X-Trace-Id`，条件写入支持 `If-Match`；错误统一包含 `errorCode`、`message` 和 `traceId`。
+- 持久化完整性：SQLite 加载前校验 Schema/Workflow 版本链、字段版本、迁移字段、Run/Trace、Snapshot/Context 关联；v6 为 Trace Span 保存显式顺序号，不接受坏投影并回写兼容 JSON。
+- 审计链：配置和回滚审计事件携带 `beforeRevision/afterRevision`，SQLite v7 校验其位于引擎 revision 链内；这表示写入归属，不等同于字段内容 diff。
 
 ## 系统架构
 
@@ -135,7 +139,9 @@ npm.cmd run dev
 | `POST` | `/api/models/{id}/transitions` | 写入事件状态转换 |
 | `GET/POST` | `/api/ontology/types` | 查询或注册本体类型 |
 | `POST` | `/api/ontology/types/{id}/relations` | 注册对象关系 |
+| `PUT` | `/api/ontology/types/{id}/relations/{relation}` | 受控更新关系目标类型或基数 |
 | `GET/POST` | `/api/services` | 查询或注册本地 Provider/Assembler |
+| `PUT` | `/api/services/{id}` | 受控更新 Provider 状态、实现、端点或版本 |
 | `GET` | `/api/runs` | 查询运行历史 |
 | `GET` | `/api/runs/{id}` | 查询完整运行、前后快照和 Trace |
 | `GET` | `/api/runs/{id}/trace` | 查询 Trace Span 时间线 |
@@ -148,6 +154,8 @@ npm.cmd run dev
 | `GET` | `/api/idempotency-records` | 查询幂等键与请求哈希绑定 |
 | `GET` | `/api/export` | 导出模型、运行、快照、Trace、审计和幂等证据 |
 | `POST` | `/api/runtime/execute` | 按模型 Schema 和工作流执行一次运行 |
+
+所有 JSON 响应都返回当前引擎 revision 的 `ETag` 和请求级 `X-Trace-Id`。配置写入可携带 `If-Match: "revision"`，版本过期时返回 409 和结构化的 `REVISION_CONFLICT`；错误响应统一包含 `errorCode`、`message` 和 `traceId`。
 
 运行请求示例：
 
@@ -176,11 +184,12 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：54/54 通过。
+- Maven 多模块测试：62/62 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
 - 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行、快照/Trace/审计/幂等查询、重试回滚、SQLite 持久化和旧 JSON 迁移已完成实测。
+- 架构回归：62 个 Maven 测试通过；包含公开对象深拷贝、受控配置更新、HTTP 错误关联/ETag/If-Match、审计 revision 链和 SQLite 坏投影拒绝用例。详见 [架构审计 v0.4](docs/架构审计_v0.4.md)。
 
 ## 论文与系统边界
 
@@ -197,7 +206,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前版本是论文级柔性引擎与本体化平台的可运行基础，但仍不是完整生产级实现。已完成运行域证据闭环的第一切片，仍需继续完善的工程能力包括：
 
-- SQLite 已建立配置域和运行域规范化表及事务投影；配置和运行事实读取已优先从规范化表重建，状态 JSON 仅保留为旧库兼容备份，加载前投影完整性校验已加入，配置表级并发审计仍待继续。
+- SQLite 已建立配置域和运行域规范化表及事务投影；配置和运行事实读取已优先从规范化表重建，状态 JSON 仅保留为旧库兼容备份，加载前投影完整性闸门已加入。当前 revision、ETag/If-Match 和带 revision 链的状态写入审计已具备，配置字段级 before/after 内容差异审计仍待继续。
 - 跨类型转换、Schema 版本回滚和更细粒度的兼容策略。
 - 故障注入、更细粒度的并发冲突恢复和重试策略配置。
 - 跨进程/跨服务的请求—响应—Provider 调用链；当前已完成本地 in-process Provider 的真实观测，不能把它等同于生产网络调用链。

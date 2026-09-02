@@ -481,7 +481,9 @@ public class EngineAdminServiceTest {
         field.put("name", "subjects");
         field.put("type", "JSON");
         service.addField("questionnaire", field);
-        service.services().get(1).setStatus("DOWN");
+        service.updateService("ontology-assembler", new LinkedHashMap<String, Object>() {{
+            put("status", "DOWN");
+        }});
 
         Map<String, Object> values = new LinkedHashMap<String, Object>();
         values.put("name", "Provider 故障");
@@ -513,7 +515,9 @@ public class EngineAdminServiceTest {
         field.put("name", "subjects");
         field.put("type", "JSON");
         service.addField("questionnaire", field);
-        service.services().get(1).setProvider("RemoteOntologyProvider");
+        service.updateService("ontology-assembler", new LinkedHashMap<String, Object>() {{
+            put("provider", "RemoteOntologyProvider");
+        }});
 
         Map<String, Object> values = new LinkedHashMap<String, Object>();
         values.put("name", "Provider 绑定");
@@ -543,7 +547,9 @@ public class EngineAdminServiceTest {
         field.put("name", "subjects");
         field.put("type", "JSON");
         service.addField("questionnaire", field);
-        service.ontologyTypes().get(0).getRelations().get(0).setTargetType("Option");
+        service.updateOntologyRelation("questionnaire", "containsSubject", new LinkedHashMap<String, Object>() {{
+            put("targetType", "Option");
+        }});
 
         Map<String, Object> values = new LinkedHashMap<String, Object>();
         values.put("name", "目标类型校验");
@@ -572,7 +578,9 @@ public class EngineAdminServiceTest {
         field.put("name", "subjects");
         field.put("type", "JSON");
         service.addField("questionnaire", field);
-        service.ontologyTypes().get(0).getRelations().get(0).setCardinality("1:1");
+        service.updateOntologyRelation("questionnaire", "containsSubject", new LinkedHashMap<String, Object>() {{
+            put("cardinality", "1:1");
+        }});
 
         Map<String, Object> first = new LinkedHashMap<String, Object>();
         first.put("id", "s-001");
@@ -595,6 +603,110 @@ public class EngineAdminServiceTest {
         assertEquals("FAILED", run.getStatus());
         assertEquals("ONTOLOGY_ASSEMBLY_ERROR", run.getErrorCode());
         assertTrue(run.getValidationErrors().get(0).contains("cardinality"));
+    }
+
+    @Test
+    public void publicReadModelsAreDetachedFromTheMutableAggregate() throws Exception {
+        Path path = Files.createTempDirectory("engine-admin-boundary").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+
+        EngineModel model = service.model("questionnaire");
+        model.getFields().clear();
+        model.getTransitions().clear();
+        service.ontologyTypes().get(0).getRelations().get(0).setTargetType("Option");
+        service.services().get(1).setStatus("DOWN");
+
+        assertEquals(3, service.model("questionnaire").getFields().size());
+        assertEquals("Subject", service.ontologyTypes().get(0).getRelations().get(0).getTargetType());
+        assertEquals("READY", service.services().get(1).getStatus());
+
+        RuntimeRun run = service.execute(new LinkedHashMap<String, Object>() {{
+            put("modelId", "interview-session");
+            put("contextId", "ctx-detached");
+            put("event", "startInterview");
+        }});
+        run.getValues().put("notPersisted", true);
+        run.getTrace().getSpans().clear();
+        assertEquals(false, service.run(run.getId()).getValues().containsKey("notPersisted"));
+        assertEquals(7, service.run(run.getId()).getTrace().getSpans().size());
+    }
+
+    @Test
+    public void newlyRegisteredModelStartsWithCompleteVersionHistory() throws Exception {
+        Path path = Files.createTempDirectory("engine-admin-model-history").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+
+        service.addModel(new LinkedHashMap<String, Object>() {{
+            put("id", "history-model");
+            put("name", "历史模型");
+            put("initialState", "DRAFT");
+        }});
+
+        EngineModel model = service.model("history-model");
+        assertEquals(1, model.getSchemaVersions().size());
+        assertEquals(1, model.getSchemaVersions().get(0).getVersion());
+        assertEquals(1, model.getWorkflowVersions().size());
+        assertEquals(1, model.getWorkflowVersions().get(0).getVersion());
+    }
+
+    @Test
+    public void invalidFieldDefaultIsRejectedBeforeSchemaMutation() throws Exception {
+        Path path = Files.createTempDirectory("engine-admin-default").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        try {
+            service.addField("questionnaire", new LinkedHashMap<String, Object>() {{
+                put("name", "invalidDefault");
+                put("type", "INTEGER");
+                put("defaultValue", "not-an-integer");
+            }});
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("default value"));
+            assertEquals(1, service.model("questionnaire").getSchemaVersion());
+            assertEquals(3, service.model("questionnaire").getFields().size());
+            return;
+        }
+        throw new AssertionError("invalid field default must be rejected");
+    }
+
+    @Test
+    public void auditEventsCarryTheStateRevisionTheyBelongTo() throws Exception {
+        Path path = Files.createTempDirectory("engine-admin-audit-revision").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+
+        service.addModel(new LinkedHashMap<String, Object>() {{
+            put("id", "audit-model");
+            put("name", "审计模型");
+        }});
+        AuditEventRecord first = service.auditEvents().get(0);
+        service.addField("audit-model", new LinkedHashMap<String, Object>() {{
+            put("name", "score");
+            put("type", "INTEGER");
+        }});
+        AuditEventRecord second = service.auditEvents().get(0);
+
+        assertEquals(first.getAfterRevision(), second.getBeforeRevision());
+        assertEquals(1L, first.getBeforeRevision());
+        assertEquals(2L, first.getAfterRevision());
+        assertEquals(3L, second.getAfterRevision());
+        assertEquals(second.getAfterRevision(), service.revision());
+    }
+
+    @Test
+    public void ontologyAndProviderChangesUseAuditedCommands() throws Exception {
+        Path path = Files.createTempDirectory("engine-admin-updates").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+
+        OntologyRelationConfig relation = service.updateOntologyRelation("questionnaire", "containsSubject",
+                new LinkedHashMap<String, Object>() {{ put("cardinality", "1:1"); }});
+        ServiceRegistration provider = service.updateService("ontology-assembler",
+                new LinkedHashMap<String, Object>() {{ put("status", "DOWN"); }});
+
+        assertEquals("1:1", relation.getCardinality());
+        assertEquals("DOWN", provider.getStatus());
+        assertEquals("1:1", service.ontologyTypes().get(0).getRelations().get(0).getCardinality());
+        assertEquals("DOWN", service.services().get(1).getStatus());
+        assertEquals("SERVICE_UPDATED", service.auditEvents().get(0).getAction());
+        assertEquals("ONTOLOGY_RELATION_UPDATED", service.auditEvents().get(1).getAction());
     }
 
     private static List<String> spanNames(RuntimeRun run) {

@@ -35,13 +35,15 @@ public class SqliteEngineStateRepositoryTest {
 
         assertEquals("confidence", field.getName());
         assertEquals(5, reloaded.getModels().get(0).getFields().size());
+        assertEquals(1L, reloaded.getAuditEvents().get(0).getBeforeRevision());
+        assertEquals(2L, reloaded.getAuditEvents().get(0).getAfterRevision());
         assertTrue(Files.size(directory.resolve("engine.db")) > 0);
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + directory.resolve("engine.db").toAbsolutePath());
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT max(version) FROM schema_version), (SELECT count(*) FROM engine_model), " +
                              "(SELECT count(*) FROM schema_field WHERE field_name = 'confidence')")) {
             assertTrue(result.next());
-            assertEquals(5, result.getInt(1));
+            assertEquals(7, result.getInt(1));
             assertEquals(2, result.getInt(2));
             assertTrue(result.getInt(3) >= 1);
         }
@@ -97,6 +99,58 @@ public class SqliteEngineStateRepositoryTest {
             fail("broken normalized projection must not be silently rewritten");
         } catch (IllegalStateException exception) {
             assertTrue(exception.getCause().getMessage().contains("missing current schema definition"));
+        }
+    }
+
+    @Test
+    public void rejectsAFieldVersionThatCannotBelongToItsSchema() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-field-integrity");
+        Path database = directory.resolve("engine.db");
+        SqliteEngineStateRepository repository = new SqliteEngineStateRepository(database);
+        repository.load();
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement update = connection.prepareStatement(
+                     "UPDATE schema_field SET field_version = ? WHERE model_id = ? AND schema_version = ? AND field_name = ?")) {
+            update.setInt(1, 999);
+            update.setString(2, "interview-session");
+            update.setInt(3, 1);
+            update.setString(4, "candidateName");
+            update.executeUpdate();
+        }
+
+        try {
+            repository.load();
+            fail("invalid field version must be rejected");
+        } catch (IllegalStateException exception) {
+            assertTrue(exception.getCause().getMessage().contains("schema_field version is newer"));
+        }
+    }
+
+    @Test
+    public void rejectsRuntimeRunWithMismatchedTraceIdentity() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-trace-integrity");
+        Path database = directory.resolve("engine.db");
+        EngineAdminService service = new EngineAdminService(new SqliteEngineStateRepository(database));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "interview-session");
+        payload.put("contextId", "ctx-trace-integrity");
+        payload.put("event", "startInterview");
+        RuntimeRun run = service.execute(payload);
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement update = connection.prepareStatement(
+                     "UPDATE runtime_run SET trace_id = ? WHERE run_id = ?")) {
+            update.setString(1, "trace-does-not-match");
+            update.setString(2, run.getId());
+            update.executeUpdate();
+        }
+
+        try {
+            new SqliteEngineStateRepository(database).load();
+            fail("runtime trace mismatch must be rejected");
+        } catch (IllegalStateException exception) {
+            assertTrue(exception.getCause().getMessage().contains("mismatched trace"));
         }
     }
 
@@ -185,7 +239,7 @@ public class SqliteEngineStateRepositoryTest {
             spanUpdate.setString(1, "{\"source\":\"normalized\"}");
             spanUpdate.setString(2, written.getTraceId());
             spanUpdate.setString(3, "request");
-            spanUpdate.executeUpdate();
+            assertEquals(1, spanUpdate.executeUpdate());
         }
 
         EngineAdminService reloaded = new EngineAdminService(new SqliteEngineStateRepository(database));
@@ -212,7 +266,7 @@ public class SqliteEngineStateRepositoryTest {
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT max(version) FROM schema_version), input_values_json, attempt, retry_of_run_id FROM runtime_run WHERE run_id = '" + written.getId() + "'")) {
             assertTrue(result.next());
-            assertEquals(5, result.getInt(1));
+            assertEquals(7, result.getInt(1));
             assertTrue(result.getString(2).contains("重启恢复"));
             assertEquals(1, result.getInt(3));
             assertEquals(null, result.getString(4));

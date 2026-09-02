@@ -93,11 +93,57 @@ public class EngineAdminServerTest {
         }
     }
 
+    @Test
+    public void httpConfigurationUpdatesAndErrorsHaveStableContracts() throws Exception {
+        Path path = Files.createTempDirectory("engine-http-contract").resolve("state.json");
+        EngineAdminServer server = EngineAdminServer.start(0, path);
+        try {
+            HttpResponse relation = request(server, "PUT", "/api/ontology/types/questionnaire/relations/containsSubject",
+                    "{\"cardinality\":\"1:1\"}");
+            HttpResponse provider = request(server, "PUT", "/api/services/ontology-assembler",
+                    "{\"status\":\"DOWN\"}");
+            HttpResponse malformed = requestWithTrace(server, "POST", "/api/runtime/execute", "{", "review-trace-001");
+            HttpResponse missing = request(server, "GET", "/api/does-not-exist", null);
+
+            assertEquals(200, relation.status);
+            assertTrue(relation.body.contains("1:1"));
+            assertEquals(200, provider.status);
+            assertTrue(provider.body.contains("DOWN"));
+            assertEquals(400, malformed.status);
+            assertTrue(malformed.body.contains("INVALID_JSON"));
+            assertTrue(malformed.body.contains("review-trace-001"));
+            assertEquals(404, missing.status);
+            assertTrue(missing.body.contains("ROUTE_NOT_FOUND"));
+            assertTrue(missing.body.contains("traceId"));
+
+            String currentRevision = String.valueOf(server.getService().revision());
+            HttpResponse stale = requestWithHeader(server, "PUT", "/api/services/ontology-assembler",
+                    "{\"status\":\"READY\"}", "If-Match", "\"" + (Long.parseLong(currentRevision) - 1) + "\"");
+            assertEquals(409, stale.status);
+            assertTrue(stale.body.contains("REVISION_CONFLICT"));
+        } finally {
+            server.stop();
+        }
+    }
+
     private HttpResponse request(EngineAdminServer server, String method, String path, String body) throws Exception {
+        return requestWithTrace(server, method, path, body, null);
+    }
+
+    private HttpResponse requestWithTrace(EngineAdminServer server, String method, String path, String body,
+                                          String traceId) throws Exception {
+        return requestWithHeader(server, method, path, body, traceId == null ? null : "X-Trace-Id", traceId);
+    }
+
+    private HttpResponse requestWithHeader(EngineAdminServer server, String method, String path, String body,
+                                           String header, String value) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + path).openConnection();
         connection.setRequestMethod(method);
         connection.setConnectTimeout(3000);
         connection.setReadTimeout(3000);
+        if (header != null && value != null) {
+            connection.setRequestProperty(header, value);
+        }
         if (body != null) {
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/json");
