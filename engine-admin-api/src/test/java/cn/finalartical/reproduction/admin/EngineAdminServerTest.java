@@ -126,6 +126,21 @@ public class EngineAdminServerTest {
         }
     }
 
+    @Test
+    public void corsPreflightAdvertisesConditionalWriteAndEvidenceHeaders() throws Exception {
+        Path path = Files.createTempDirectory("engine-http-cors").resolve("state.json");
+        EngineAdminServer server = EngineAdminServer.start(0, path);
+        try {
+            HttpResponse preflight = requestWithHeader(server, "OPTIONS", "/api/models", null,
+                    "Access-Control-Request-Headers", "Content-Type, If-Match");
+            assertEquals(204, preflight.status);
+            assertTrue(preflight.allowHeaders.contains("If-Match"));
+            assertTrue(preflight.exposeHeaders.contains("ETag"));
+        } finally {
+            server.stop();
+        }
+    }
+
     private HttpResponse request(EngineAdminServer server, String method, String path, String body) throws Exception {
         return requestWithTrace(server, method, path, body, null);
     }
@@ -153,10 +168,14 @@ public class EngineAdminServerTest {
         }
         int status = connection.getResponseCode();
         InputStream input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-        return new HttpResponse(status, read(input));
+        return new HttpResponse(status, read(input), connection.getHeaderField("Access-Control-Allow-Headers"),
+                connection.getHeaderField("Access-Control-Expose-Headers"));
     }
 
     private String read(InputStream input) throws Exception {
+        if (input == null) {
+            return "";
+        }
         try (InputStream source = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[1024];
             int length;
@@ -170,10 +189,14 @@ public class EngineAdminServerTest {
     private static final class HttpResponse {
         private final int status;
         private final String body;
+        private final String allowHeaders;
+        private final String exposeHeaders;
 
-        private HttpResponse(int status, String body) {
+        private HttpResponse(int status, String body, String allowHeaders, String exposeHeaders) {
             this.status = status;
             this.body = body;
+            this.allowHeaders = allowHeaders == null ? "" : allowHeaders;
+            this.exposeHeaders = exposeHeaders == null ? "" : exposeHeaders;
         }
     }
 }

@@ -43,6 +43,17 @@ public class OntologyGraphValidatorTest {
         ));
     }
 
+    @Test(expected = IllegalArgumentException.class)
+    public void rejectsMissingTargetForExactOneToOneRelation() {
+        new OntologyGraphValidator().validate(graph(0, "Subject", "Option"), Arrays.asList(
+                type("questionnaire", "Questionnaire", attrs("name", "subjectId"),
+                        relation("containsSubject", "Subject", "1:1")),
+                type("subject", "Subject", attrs("title"),
+                        relation("subjectContainsOption", "Option", "1:N")),
+                type("option", "Option", Collections.<String>emptyList())
+        ));
+    }
+
     private static OntologyTypeDefinition type(String id, String label, List<String> attributes,
                                                 OntologyRelationDefinition... relations) {
         return new OntologyTypeDefinition(id, label, attributes,
@@ -70,7 +81,9 @@ public class OntologyGraphValidatorTest {
         for (int index = 1; index <= subjectCount; index++) {
             relations.add(edge("q-001", "containsSubject", "s-00" + index));
         }
-        relations.add(edge("s-001", "subjectContainsOption", "o-001"));
+        if (subjectCount > 0) {
+            relations.add(edge("s-001", "subjectContainsOption", "o-001"));
+        }
         graph.put("rootObjectId", "q-001");
         graph.put("objects", objects);
         graph.put("relations", relations);

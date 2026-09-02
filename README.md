@@ -184,12 +184,12 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：65/65 通过。
+- Maven 多模块测试：73/73 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
 - 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行、快照/Trace/审计/幂等查询、重试回滚、SQLite 持久化和旧 JSON 迁移已完成实测。
-- 架构回归：65 个 Maven 测试通过；包含公开对象深拷贝、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match、审计 revision 链、SQLite 坏投影拒绝和备份恢复完整性用例。详见 [架构审计 v0.5](docs/架构审计_v0.5.md)。
+- 架构回归：73 个 Maven 测试通过；包含公开对象深拷贝、嵌套输入隔离、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match/CORS 预检、审计 revision 链、SQLite 坏投影拒绝、历史 legacy 运行保留和备份恢复完整性用例。详见 [架构审计 v0.5](docs/架构审计_v0.5.md) 与 [复现审稿报告](docs/复现审稿报告_v0.1.md)。
 
 ## 论文与系统边界
 

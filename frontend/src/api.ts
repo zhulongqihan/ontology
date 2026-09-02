@@ -111,7 +111,7 @@ export interface ExecutionSnapshot {
 }
 
 export interface TraceSpan {
-  id: string
+  spanId: string
   traceId: string
   name: string
   startedAt: string
@@ -139,6 +139,13 @@ export interface AuditEvent {
   targetId: string
   createdAt: string
   details: string
+  beforeRevision: number
+  afterRevision: number
+  changes: Array<{
+    path: string
+    beforeValue: unknown
+    afterValue: unknown
+  }>
 }
 
 export interface IdempotencyRecord {
@@ -170,7 +177,8 @@ export interface EngineOverview {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string,
+              public readonly errorCode?: string, public readonly traceId?: string) {
     super(message)
     this.name = 'ApiError'
   }
@@ -188,7 +196,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   const payload = await response.json().catch(() => null)
   if (!response.ok) {
-    throw new ApiError(response.status, payload?.error ?? `API request failed: ${response.status}`)
+    throw new ApiError(response.status, payload?.message ?? payload?.error ?? `API request failed: ${response.status}`,
+      payload?.errorCode, payload?.traceId)
   }
   return payload as T
 }

@@ -278,7 +278,8 @@ public final class EngineAdminServer {
 
     private void addCors(HttpExchange exchange) {
         exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, X-Trace-Id");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, X-Trace-Id, If-Match");
+        exchange.getResponseHeaders().set("Access-Control-Expose-Headers", "ETag, X-Trace-Id");
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
     }
 

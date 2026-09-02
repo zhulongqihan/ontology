@@ -14,6 +14,12 @@ public final class VersionedSchema {
         if (version < 1 || definitions == null) {
             throw new IllegalArgumentException("schema version and definitions must be valid");
         }
+        int expectedVersion = versions.isEmpty() ? 1 : versions.keySet().stream()
+                .max(Integer::compareTo).get() + 1;
+        if (version != expectedVersion) {
+            throw new IllegalArgumentException("schema versions must be published sequentially; expected "
+                    + expectedVersion + " but was " + version);
+        }
         if (versions.containsKey(version)) {
             throw new IllegalArgumentException("schema version already registered: " + version);
         }

@@ -421,7 +421,10 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                         || run.getStatus() == null || run.getDataIdentity() == null || run.getEvent() == null
                         || run.getFromState() == null || run.getToState() == null || run.getTraceId() == null
                         || run.getCreatedAt() == null) {
-                    continue;
+                    if (isLegacyRuntimeRun(run)) {
+                        continue;
+                    }
+                    throw new SQLException("runtime_run has incomplete identity: " + run.getId());
                 }
                 insert.setString(1, run.getId());
                 insert.setString(2, run.getModelId());
@@ -999,7 +1002,8 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             assertNoRows(connection,
                     "SELECT r.run_id FROM runtime_run r "
                             + "LEFT JOIN trace t ON t.trace_id = r.trace_id AND t.run_id = r.run_id "
-                            + "WHERE t.trace_id IS NULL",
+                            + "WHERE t.trace_id IS NULL AND r.engine_version <> '' "
+                            + "AND r.schema_version >= 1 AND r.workflow_version >= 1",
                     "runtime_run points to a mismatched trace");
             assertNoRows(connection,
                     "SELECT c.context_id FROM runtime_context c "
@@ -1336,6 +1340,17 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             if (runId.equals(run.getId()) && run.getContextId() != null) return true;
         }
         return false;
+    }
+
+    /**
+     * Historical runtime rows predate the evidence contract. They are retained
+     * as an explicitly marked archive record and are never upgraded into a
+     * current run merely because the database is opened.
+     */
+    private boolean isLegacyRuntimeRun(cn.finalartical.reproduction.admin.RuntimeRun run) {
+        return run != null && (run.getEngineVersion() == null || run.getEngineVersion().trim().isEmpty()
+                || run.getSchemaVersion() < 1 || run.getWorkflowVersion() < 1
+                || run.getTrace() == null || run.getBeforeSnapshot() == null || run.getAfterSnapshot() == null);
     }
 
     private void executeDelete(Connection connection, String sql) throws SQLException {

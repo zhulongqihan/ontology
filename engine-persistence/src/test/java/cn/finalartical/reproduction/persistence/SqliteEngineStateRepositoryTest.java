@@ -363,6 +363,39 @@ public class SqliteEngineStateRepositoryTest {
         }
     }
 
+    @Test
+    public void retainsEvidenceIncompleteRuntimeRowsAsExplicitLegacyRecords() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-legacy-runtime-row");
+        Path database = directory.resolve("engine.db");
+        EngineAdminService service = new EngineAdminService(new SqliteEngineStateRepository(database));
+        RuntimeRun written = service.execute(new LinkedHashMap<String, Object>() {{
+            put("modelId", "interview-session");
+            put("contextId", "ctx-legacy-runtime-row");
+            put("event", "startInterview");
+        }});
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement update = connection.prepareStatement(
+                     "UPDATE runtime_run SET engine_version = '', schema_version = 0, workflow_version = 0 "
+                             + "WHERE run_id = ?");
+             PreparedStatement deleteSpans = connection.prepareStatement(
+                     "DELETE FROM trace_span WHERE trace_id = ?");
+             PreparedStatement deleteTrace = connection.prepareStatement(
+                     "DELETE FROM trace WHERE run_id = ?")) {
+            update.setString(1, written.getId());
+            update.executeUpdate();
+            deleteSpans.setString(1, written.getTraceId());
+            deleteSpans.executeUpdate();
+            deleteTrace.setString(1, written.getId());
+            deleteTrace.executeUpdate();
+        }
+
+        EngineAdminService reloaded = new EngineAdminService(new SqliteEngineStateRepository(database));
+
+        assertEquals(EngineAdminService.LEGACY_RUNTIME_IDENTITY, reloaded.run(written.getId()).getDataIdentity());
+        assertEquals(null, reloaded.run(written.getId()).getTrace());
+    }
+
     private static cn.finalartical.reproduction.admin.EngineModel findModel(EngineState state, String modelId) {
         for (cn.finalartical.reproduction.admin.EngineModel model : state.getModels()) {
             if (modelId.equals(model.getId())) {

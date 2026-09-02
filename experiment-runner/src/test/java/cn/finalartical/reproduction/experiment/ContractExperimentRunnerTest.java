@@ -60,6 +60,9 @@ public class ContractExperimentRunnerTest {
             assertTrue(trace.contains("\"response_json\":"));
             String request = new String(Files.readAllBytes(output.resolve("C-01").resolve("request.json")), StandardCharsets.UTF_8);
             assertTrue(request.contains("\"arguments\":{"));
+            String legacyRequest = new String(Files.readAllBytes(output.resolve("C-03").resolve("request.json")),
+                    StandardCharsets.UTF_8);
+            assertTrue(legacyRequest.contains("\"legacy_subject_id\":\"subject-001\""));
         } finally {
             deleteRecursively(output);
         }

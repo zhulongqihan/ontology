@@ -129,6 +129,18 @@ public class FlexibleEngineTest {
     }
 
     @Test
+    public void versionedSchemaRejectsGapsInPublishedHistory() {
+        VersionedSchema schemas = new VersionedSchema().register(1, Collections.<FieldDefinition>emptyList());
+        try {
+            schemas.register(3, Collections.<FieldDefinition>emptyList());
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("sequentially"));
+            return;
+        }
+        throw new AssertionError("schema history must not contain a version gap");
+    }
+
+    @Test
     public void publishedSchemaVersionsAreImmutableAndCannotBePublishedTwice() {
         SchemaDefinition schema = new SchemaDefinition("assessment-session")
                 .publish(new SchemaVersion(1, Arrays.asList(

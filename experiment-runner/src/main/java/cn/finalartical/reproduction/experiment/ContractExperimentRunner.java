@@ -87,26 +87,27 @@ public final class ContractExperimentRunner {
         long providerStarted = System.nanoTime();
         Instant providerStartedAt = Instant.now();
 
+        Map<String, Object> arguments = requestArguments(contractCase);
         String requestJson = "{"
                 + "\"trace_id\":" + quote(traceId)
                 + ",\"capability\":" + quote(capability)
                 + ",\"scenario\":" + quote(scenario)
                 + ",\"request_shape\":" + quote(contractCase.getRequestShape())
-                + ",\"arguments\":" + requestArgumentsJson(capability, scenario)
+                + ",\"arguments\":" + mapJson(arguments)
                 + "}";
         try {
             if ("questionnaire-query".equals(capability) || "subject-questionnaire-query".equals(capability)) {
                 operation = "queryQuestionnaireIdsBySubjectId";
-                result = service.queryQuestionnaireIdsBySubjectId(inputFor(scenario), traceId);
+                result = service.queryQuestionnaireIdsByRequest(arguments, traceId);
             } else if ("linkage-config-query".equals(capability)) {
                 operation = "queryQuestionnaireLinkageConfig";
-                result = service.queryQuestionnaireLinkageConfig(inputForQuestionnaire(scenario), traceId);
+                result = service.queryQuestionnaireLinkageConfigByRequest(arguments, traceId);
             } else if ("linkage-config-save".equals(capability)) {
                 operation = "saveQuestionnaireLinkageConfig";
-                result = service.saveQuestionnaireLinkageConfig(inputForQuestionnaire(scenario), "v1", traceId);
+                result = service.saveQuestionnaireLinkageConfigByRequest(arguments, traceId);
             } else if ("interview-session-detail".equals(capability)) {
                 operation = "questionnaireDetail";
-                result = service.questionnaireDetail(inputForQuestionnaire(scenario), traceId);
+                result = service.questionnaireDetailByRequest(arguments, traceId);
             } else {
                 operation = "providerUnavailable";
                 result = JsfExAssessService.providerUnavailable(traceId);
@@ -282,18 +283,26 @@ public final class ContractExperimentRunner {
         return message == null || message.trim().isEmpty() ? "provider call failed" : message;
     }
 
-    private static String requestArgumentsJson(String capability, String scenario) {
-        if ("questionnaire-query".equals(capability) || "subject-questionnaire-query".equals(capability)) {
-            return "{\"subject_id\":" + quote(inputFor(scenario)) + "}";
+    private static Map<String, Object> requestArguments(ContractCase contractCase) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        String shape = contractCase.getRequestShape();
+        if (shape == null || shape.trim().isEmpty()) {
+            return result;
         }
-        if ("linkage-config-query".equals(capability) || "interview-session-detail".equals(capability)) {
-            return "{\"questionnaire_id\":" + quote(inputForQuestionnaire(scenario)) + "}";
+        for (String item : shape.split(";", -1)) {
+            int separator = item.indexOf('=');
+            if (separator <= 0) {
+                throw new IllegalArgumentException("invalid request shape for " + contractCase.getCaseId()
+                        + ": " + shape);
+            }
+            String name = item.substring(0, separator).trim();
+            String value = item.substring(separator + 1).trim();
+            if (name.isEmpty()) {
+                throw new IllegalArgumentException("request shape field must not be blank");
+            }
+            result.put(name, "null".equalsIgnoreCase(value) ? null : value);
         }
-        if ("linkage-config-save".equals(capability)) {
-            return "{\"questionnaire_id\":" + quote(inputForQuestionnaire(scenario))
-                    + ",\"version\":\"v1\"}";
-        }
-        return "{}";
+        return result;
     }
 
     private static Map<String, String> mapOf(String... values) {
@@ -353,16 +362,18 @@ public final class ContractExperimentRunner {
         return quote(String.valueOf(data));
     }
 
-    private static String mapJson(java.util.Map<String, Object> values) {
+    private static String mapJson(java.util.Map<String, ?> values) {
         StringBuilder builder = new StringBuilder("{");
         int index = 0;
-        for (java.util.Map.Entry<String, Object> entry : values.entrySet()) {
+        for (java.util.Map.Entry<String, ?> entry : values.entrySet()) {
             if (index++ > 0) {
                 builder.append(',');
             }
             builder.append(quote(entry.getKey())).append(':');
             Object value = entry.getValue();
-            if (value instanceof Number || value instanceof Boolean) {
+            if (value == null) {
+                builder.append("null");
+            } else if (value instanceof Number || value instanceof Boolean) {
                 builder.append(String.valueOf(value));
             } else {
                 builder.append(quote(String.valueOf(value)));

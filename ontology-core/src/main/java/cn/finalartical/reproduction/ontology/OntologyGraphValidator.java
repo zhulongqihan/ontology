@@ -100,13 +100,15 @@ public final class OntologyGraphValidator {
                     ? relationCounts.get(countKey) + 1 : 1);
         }
 
-        for (Map.Entry<String, Integer> entry : relationCounts.entrySet()) {
-            String[] parts = entry.getKey().split("\u0000", -1);
-            OntologyRelationDefinition definition = objectDefinitions.get(parts[0]).relation(parts[1]);
-            if (!definition.allowsTargetCount(entry.getValue())) {
-                throw new IllegalArgumentException("ontology relation cardinality violated for "
-                        + parts[0] + ":" + parts[1] + ", cardinality=" + definition.getCardinality()
-                        + ", actualTargets=" + entry.getValue());
+        for (Map.Entry<String, OntologyTypeDefinition> object : objectDefinitions.entrySet()) {
+            for (OntologyRelationDefinition definition : object.getValue().getRelations().values()) {
+                String countKey = object.getKey() + "\u0000" + definition.getName();
+                int actualTargets = relationCounts.containsKey(countKey) ? relationCounts.get(countKey) : 0;
+                if (!definition.allowsTargetCount(actualTargets)) {
+                    throw new IllegalArgumentException("ontology relation cardinality violated for "
+                            + object.getKey() + ":" + definition.getName() + ", cardinality="
+                            + definition.getCardinality() + ", actualTargets=" + actualTargets);
+                }
             }
         }
     }

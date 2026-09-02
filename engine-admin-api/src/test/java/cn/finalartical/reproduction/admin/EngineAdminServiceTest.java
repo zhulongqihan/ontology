@@ -277,7 +277,7 @@ public class EngineAdminServiceTest {
         assertEquals("flexible-engine-ontology", engine.get("id"));
         assertEquals("柔性引擎与本体化平台", engine.get("name"));
         assertEquals("0.3.0", engine.get("version"));
-        assertEquals("ENGINE_RUNTIME_RESULT", service.runs().get(0).getDataIdentity());
+        assertEquals("REPRODUCED_SYSTEM_RUN", service.runs().get(0).getDataIdentity());
     }
 
     @Test
@@ -330,6 +330,88 @@ public class EngineAdminServiceTest {
         assertEquals(first.getId(), second.getId());
         assertEquals(1, service.runs().size());
         assertEquals(1L, service.context("ctx-idempotent").getRevision());
+    }
+
+    @Test
+    public void idempotencyBindsOntologyInputAsPartOfTheRequest() throws Exception {
+        Path path = Files.createTempDirectory("engine-idempotency-ontology").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("name", "幂等本体");
+        values.put("subjectId", "subject-001");
+        Map<String, Object> first = new LinkedHashMap<String, Object>();
+        first.put("modelId", "questionnaire");
+        first.put("contextId", "ctx-idempotent-ontology");
+        first.put("event", "publish");
+        first.put("idempotencyKey", "same-ontology-request");
+        first.put("values", values);
+        first.put("ontology", new LinkedHashMap<String, Object>() {{ put("source", "first"); }});
+        service.execute(first);
+
+        Map<String, Object> second = new LinkedHashMap<String, Object>(first);
+        second.put("ontology", new LinkedHashMap<String, Object>() {{ put("source", "second"); }});
+        try {
+            service.execute(second);
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("different request"));
+            return;
+        }
+        throw new AssertionError("idempotency must include ontology input");
+    }
+
+    @Test
+    public void runtimeCopiesNestedCallerValuesBeforePersistingEvidence() throws Exception {
+        Path path = Files.createTempDirectory("engine-runtime-copy").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        service.addField("interview-session", new LinkedHashMap<String, Object>() {{
+            put("name", "metadata");
+            put("type", "JSON");
+        }});
+        Map<String, Object> metadata = new LinkedHashMap<String, Object>();
+        metadata.put("source", "caller");
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("candidateName", "嵌套隔离");
+        values.put("metadata", metadata);
+        RuntimeRun run = service.execute(new LinkedHashMap<String, Object>() {{
+            put("modelId", "interview-session");
+            put("contextId", "ctx-runtime-copy");
+            put("event", "startInterview");
+            put("values", values);
+        }});
+
+        metadata.put("source", "caller-mutated");
+        Map<?, ?> persistedInput = (Map<?, ?>) service.run(run.getId()).getInputValues().get("metadata");
+        assertEquals("caller", persistedInput.get("source"));
+    }
+
+    @Test
+    public void legacyOntologyProviderBindingIsNormalizedToTheExplicitLocalProvider() throws Exception {
+        Path path = Files.createTempDirectory("engine-provider-legacy").resolve("state.json");
+        JsonEngineStateRepository repository = new JsonEngineStateRepository(path);
+        EngineState legacy = DefaultEngineSeed.create();
+        legacy.getServices().get(1).setProvider("OntologyAssembler");
+        repository.save(legacy);
+
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+
+        assertEquals("LocalOntologyProvider", service.services().get(1).getProvider());
+    }
+
+    @Test
+    public void invalidUnknownFieldPolicyIsRejectedWhenStateIsLoaded() throws Exception {
+        Path path = Files.createTempDirectory("engine-invalid-policy").resolve("state.json");
+        JsonEngineStateRepository repository = new JsonEngineStateRepository(path);
+        EngineState invalid = DefaultEngineSeed.create();
+        invalid.getModels().get(0).setUnknownFieldPolicy("SILENT_FALLBACK");
+        repository.save(invalid);
+
+        try {
+            new EngineAdminService(new JsonEngineStateRepository(path));
+        } catch (IllegalStateException expected) {
+            assertTrue(expected.getMessage().contains("invalid unknownFieldPolicy"));
+            return;
+        }
+        throw new AssertionError("invalid unknownFieldPolicy must be rejected");
     }
 
     @Test

@@ -3,6 +3,7 @@ package cn.finalartical.reproduction.admin;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import cn.finalartical.reproduction.flexible.FieldDefinition;
 import cn.finalartical.reproduction.flexible.FieldType;
+import cn.finalartical.reproduction.flexible.UnknownFieldPolicy;
 import cn.finalartical.reproduction.ontology.OntologyCardinality;
 
 import java.time.Instant;
@@ -18,6 +19,7 @@ import java.util.UUID;
 
 public final class EngineAdminService {
     public static final String DATA_IDENTITY = "ENGINE_RUNTIME_RESULT";
+    public static final String LEGACY_RUNTIME_IDENTITY = "LEGACY_RUNTIME_RECORD";
     private static final String LEGACY_DATA_IDENTITY = "REPRODUCED_SYSTEM_RUN";
     private static final String LEGACY_ENGINE_ID = "flexible-engine-reproduction";
     private static final String LEGACY_ENGINE_NAME = "柔性引擎复现实例";
@@ -41,6 +43,8 @@ public final class EngineAdminService {
         changed = normalizeModelVersions() || changed;
         changed = normalizeOntologyTypes() || changed;
         changed = normalizeContexts() || changed;
+        changed = normalizeServiceBindings() || changed;
+        changed = normalizeLegacyRuns() || changed;
         validateModelContracts();
         validateAuditContracts();
         if (changed) {
@@ -64,13 +68,40 @@ public final class EngineAdminService {
             state.setEngineVersion(ENGINE_VERSION);
             changed = true;
         }
-        for (RuntimeRun run : state.getRuns()) {
-            if (LEGACY_DATA_IDENTITY.equals(run.getDataIdentity())) {
-                run.setDataIdentity(DATA_IDENTITY);
+        return changed;
+    }
+
+    private boolean normalizeServiceBindings() {
+        boolean changed = false;
+        for (ServiceRegistration service : state.getServices()) {
+            if ("ontology-assembler".equals(service.getId())
+                    && "OntologyAssembler".equals(service.getProvider())) {
+                service.setProvider("LocalOntologyProvider");
                 changed = true;
             }
         }
         return changed;
+    }
+
+    private boolean normalizeLegacyRuns() {
+        boolean changed = false;
+        for (RuntimeRun run : state.getRuns()) {
+            if (run == null || LEGACY_DATA_IDENTITY.equals(run.getDataIdentity())
+                    || LEGACY_RUNTIME_IDENTITY.equals(run.getDataIdentity())) {
+                continue;
+            }
+            if (isLegacyRuntimeRun(run)) {
+                run.setDataIdentity(LEGACY_RUNTIME_IDENTITY);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private static boolean isLegacyRuntimeRun(RuntimeRun run) {
+        return run.getEngineVersion() == null || run.getEngineVersion().trim().isEmpty()
+                || run.getSchemaVersion() < 1 || run.getWorkflowVersion() < 1
+                || run.getTrace() == null || run.getBeforeSnapshot() == null || run.getAfterSnapshot() == null;
     }
 
     public synchronized Map<String, Object> overview() {
@@ -615,6 +646,12 @@ public final class EngineAdminService {
         for (EngineModel model : state.getModels()) {
             if (model.getId() == null || model.getId().trim().isEmpty()) {
                 throw new IllegalStateException("model id must not be blank");
+            }
+            try {
+                UnknownFieldPolicy.valueOf(model.getUnknownFieldPolicy().trim().toUpperCase());
+            } catch (RuntimeException exception) {
+                throw new IllegalStateException("model has an invalid unknownFieldPolicy: " + model.getId(),
+                        exception);
             }
             if (model.getSchemaVersion() < 1 || model.getSchemaVersions().isEmpty()) {
                 throw new IllegalStateException("model has no valid schema history: " + model.getId());

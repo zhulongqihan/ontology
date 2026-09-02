@@ -7,6 +7,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -26,7 +28,7 @@ public class QuestionnaireServiceProviderTest {
     @Test
     public void queryNormalAndNullUseDifferentExplicitStatuses() {
         OperationResult<java.util.List<String>> normal = service.queryQuestionnaireIdsBySubjectId("subject-001", "trace-normal");
-        OperationResult<java.util.List<String>> nullQuery = service.queryQuestionnaireIdsBySubjectId(null, "trace-null");
+        OperationResult<java.util.List<String>> nullQuery = service.queryQuestionnaireIdsBySubjectId((String) null, "trace-null");
 
         assertEquals(OperationStatus.SUCCESS, normal.getStatus());
         assertEquals(Arrays.asList("q-001", "q-002"), normal.getData());
@@ -54,5 +56,23 @@ public class QuestionnaireServiceProviderTest {
         assertEquals(OperationStatus.SUCCESS, detail.getStatus());
         assertEquals("q-001", detail.getData().getObjectId());
         assertTrue(detail.getData().getDynamicAttributes().containsKey("subjectCount"));
+    }
+
+    @Test
+    public void legacyRequestFieldNamesAreResolvedByTheCompatibilityBoundary() {
+        Map<String, Object> query = new LinkedHashMap<String, Object>();
+        query.put("legacy_subject_id", "subject-001");
+        Map<String, Object> save = new LinkedHashMap<String, Object>();
+        save.put("legacy_questionnaire_id", "q-001");
+        save.put("config", "v1");
+
+        assertEquals(OperationStatus.SUCCESS,
+                service.queryQuestionnaireIdsByRequest(query, "trace-legacy-query").getStatus());
+        assertEquals(OperationStatus.SUCCESS,
+                service.saveQuestionnaireLinkageConfigByRequest(save, "trace-legacy-save").getStatus());
+        assertEquals(OperationStatus.SUCCESS,
+                service.questionnaireDetailByRequest(new LinkedHashMap<String, Object>() {{
+                    put("legacy_questionnaire_id", "q-001");
+                }}, "trace-legacy-detail").getStatus());
     }
 }

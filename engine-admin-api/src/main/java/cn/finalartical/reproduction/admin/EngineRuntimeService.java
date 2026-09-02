@@ -51,7 +51,8 @@ final class EngineRuntimeService {
         String retryOfRunId = textValue(payload == null ? null : payload.get("retryOfRunId"), "").trim();
         int attempt = intValue(payload == null ? null : payload.get("attempt"), 1);
         String scope = modelId + "|" + contextId;
-        String requestSha256 = requestSha256(modelId, contextId, event, inputValues);
+        Object ontologyInput = payload == null ? null : payload.get("ontology");
+        String requestSha256 = requestSha256(modelId, contextId, event, inputValues, ontologyInput);
         if (!idempotencyKey.isEmpty()) {
             if (idempotencyKey.length() > 200) {
                 throw new IllegalArgumentException("idempotencyKey must be 1-200 characters");
@@ -91,8 +92,8 @@ final class EngineRuntimeService {
         }
         int beforeSchemaVersion = context.getSchemaVersion();
         int beforeWorkflowVersion = context.getWorkflowVersion();
-        Map<String, Object> contextValues = new LinkedHashMap<String, Object>(context.getValues());
-        Map<String, Object> beforeValues = new LinkedHashMap<String, Object>(contextValues);
+        Map<String, Object> contextValues = mapValue(context.getValues());
+        Map<String, Object> beforeValues = mapValue(contextValues);
         Map<String, Object> executionValues = migrateContextValues(model, contextValues, beforeSchemaVersion);
         String fromState = context.getState();
         int schemaVersion = model.getSchemaVersion();
@@ -180,8 +181,7 @@ final class EngineRuntimeService {
             providerError = "previous stage failed";
         } else {
             try {
-                ontologyGraph = invokeOntologyProvider(provider, modelId, contextId, engine.values(),
-                        payload == null ? null : payload.get("ontology"));
+                ontologyGraph = invokeOntologyProvider(provider, modelId, contextId, engine.values(), ontologyInput);
                 providerStatus = "OK";
             } catch (IllegalArgumentException exception) {
                 errors.add(exception.getMessage());
@@ -235,8 +235,8 @@ final class EngineRuntimeService {
         run.setContextRevision(passed ? context.getRevision() + 1L : context.getRevision());
         run.setContextCommitted(passed);
         run.setErrorCode(errorCode);
-        run.setInputValues(inputValues);
-        run.setValues(afterValues);
+        run.setInputValues(mapValue(inputValues));
+        run.setValues(mapValue(afterValues));
         run.setOntologyGraph(ontologyGraph);
         run.setValidationErrors(errors);
         run.setBeforeSnapshot(snapshot("BEFORE", contextId, modelId, beforeSchemaVersion, beforeWorkflowVersion,
@@ -303,7 +303,7 @@ final class EngineRuntimeService {
         payload.put("modelId", original.getModelId());
         payload.put("contextId", original.getContextId());
         payload.put("event", original.getEvent());
-        payload.put("values", new LinkedHashMap<String, Object>(original.getInputValues()));
+        payload.put("values", mapValue(original.getInputValues()));
         payload.put("retryOfRunId", original.getId());
         payload.put("attempt", original.getAttempt() + 1);
         return execute(payload);
@@ -506,15 +506,15 @@ final class EngineRuntimeService {
                     + " is ahead of model schema version " + model.getSchemaVersion());
         }
         if (fromVersion == model.getSchemaVersion()) {
-            return new LinkedHashMap<String, Object>(source);
+            return mapValue(source);
         }
-        Map<String, Object> migrated = new LinkedHashMap<String, Object>(source);
+        Map<String, Object> migrated = mapValue(source);
         for (int version = fromVersion + 1; version <= model.getSchemaVersion(); version++) {
             SchemaVersionRecord targetSchema = schemaVersion(model, version);
             Map<String, Object> next = new LinkedHashMap<String, Object>();
             for (EngineField field : targetSchema.getFields()) {
                 if (migrated.containsKey(field.getName())) {
-                    next.put(field.getName(), migrated.get(field.getName()));
+                    next.put(field.getName(), copyValue(migrated.get(field.getName())));
                     continue;
                 }
                 SchemaMigrationRecord matchedRule = null;
@@ -529,9 +529,9 @@ final class EngineRuntimeService {
                     }
                 }
                 if (matchedRule != null && migrated.containsKey(matchedRule.getSourceField())) {
-                    next.put(field.getName(), migrated.get(matchedRule.getSourceField()));
+                    next.put(field.getName(), copyValue(migrated.get(matchedRule.getSourceField())));
                 } else if (field.getDefaultValue() != null) {
-                    next.put(field.getName(), field.getDefaultValue());
+                    next.put(field.getName(), copyValue(field.getDefaultValue()));
                 }
             }
             migrated = next;
@@ -589,9 +589,9 @@ final class EngineRuntimeService {
 
     private UnknownFieldPolicy policy(EngineModel model) {
         try {
-            return UnknownFieldPolicy.valueOf(model.getUnknownFieldPolicy().toUpperCase());
+            return UnknownFieldPolicy.valueOf(model.getUnknownFieldPolicy().trim().toUpperCase());
         } catch (IllegalArgumentException exception) {
-            return UnknownFieldPolicy.REJECT;
+            throw new IllegalStateException("model has an invalid unknownFieldPolicy: " + model.getId(), exception);
         }
     }
 
@@ -712,24 +712,32 @@ final class EngineRuntimeService {
         return context.getStatus() == null ? "CREATED" : context.getStatus();
     }
 
-    private String requestSha256(String modelId, String contextId, String event, Map<String, Object> values) {
+    private String requestSha256(String modelId, String contextId, String event, Map<String, Object> values,
+                                 Object ontology) {
         Map<String, Object> request = new LinkedHashMap<String, Object>();
         request.put("modelId", modelId);
         request.put("contextId", contextId);
         request.put("event", event);
         request.put("values", values);
+        request.put("ontology", copyValue(ontology));
         return new cn.finalartical.reproduction.flexible.ContextSnapshot(request).getSha256();
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> mapValue(Object value) {
+    private Map<String, Object> mapValue(Object value) {
         if (value == null) {
-            return Collections.emptyMap();
+            return new LinkedHashMap<String, Object>();
         }
         if (!(value instanceof Map)) {
             throw new IllegalArgumentException("values must be an object");
         }
-        return (Map<String, Object>) value;
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
+            if (!(entry.getKey() instanceof String) || ((String) entry.getKey()).trim().isEmpty()) {
+                throw new IllegalArgumentException("values object keys must be non-blank strings");
+            }
+            result.put((String) entry.getKey(), copyValue(entry.getValue()));
+        }
+        return result;
     }
 
     private static String requiredText(Map<String, Object> payload, String key) {
