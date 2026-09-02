@@ -40,7 +40,7 @@ Provider / Consumer 兼容调用
 - 管理 API：模型、字段、转换、本体类型、关系和服务注册的读取与写入。
 - 运行证据：每次运行固定引擎、Schema、Workflow 版本，保存独立 RuntimeContext、before/after Snapshot、SHA-256、Trace Span、幂等记录和错误原因。
 - 运行控制：失败 Run 可生成新的 attempt 重试，成功 Run 可在上下文仍处于其最新 revision 时生成可审计的回滚 Run；两者都保留原始运行链路。
-- 状态持久化：配置和运行历史默认保存到 SQLite `data/flexible-engine.db`，运行域事实同步写入 `runtime_context`、`runtime_run`、`execution_snapshot`、`trace`、`trace_span`、`audit_event` 和 `idempotency_record` 表，重启后重新加载。
+- 状态持久化：配置和运行历史默认保存到 SQLite `data/flexible-engine.db`；配置域同步写入模型、Schema、Workflow、本体和服务规范化表，运行域事实同步写入 `runtime_context`、`runtime_run`、`execution_snapshot`、`trace`、`trace_span`、`audit_event` 和 `idempotency_record` 表，重启后重新加载。
 - 控制面前端：引擎总览、模型管理、Schema/字段、工作流、本体模型、服务注册和运行调试。
 - 契约回归：20 条接口契约规格、逐用例结果、Trace、报告和稳定哈希输出。
 
@@ -190,7 +190,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前版本是论文级柔性引擎与本体化平台的可运行基础，但仍不是完整生产级实现。已完成运行域证据闭环的第一切片，仍需继续完善的工程能力包括：
 
-- SQLite 已建立运行域规范化表和事务投影；模型、Schema、Workflow、本体和服务配置的规范化表及从投影读取仍待继续。
+- SQLite 已建立配置域和运行域规范化表及事务投影；当前状态文档仍是兼容权威源，直接从配置投影读取和投影完整性校验仍待继续。
 - Schema 迁移规则、字段编辑/删除和版本回滚。
 - 故障注入、更细粒度的并发冲突恢复和重试策略配置。
 - 请求—响应—Provider 的真实多服务调用链和更多 Trace 语义。

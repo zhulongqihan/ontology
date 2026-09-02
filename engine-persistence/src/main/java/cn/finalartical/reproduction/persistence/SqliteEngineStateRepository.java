@@ -23,9 +23,10 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.ConcurrentModificationException;
+import java.util.List;
 
 public final class SqliteEngineStateRepository implements EngineStateRepository {
-    private static final int SCHEMA_VERSION = 3;
+    private static final int SCHEMA_VERSION = 4;
 
     private final Path databasePath;
     private final Path legacyJsonPath;
@@ -57,6 +58,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             state.setRevision(currentRevision(connection));
             connection.setAutoCommit(false);
             try {
+                synchronizeConfigurationProjection(connection, state);
                 synchronizeRuntimeProjection(connection, state);
                 connection.commit();
             } catch (SQLException exception) {
@@ -169,6 +171,17 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                     insert.executeUpdate();
                 }
             }
+            if (!hasVersion(connection, 4)) {
+                for (String sql : readMigration("/schema/004_configuration_domain.sql")) {
+                    if (!sql.trim().isEmpty()) statement.execute(sql);
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
+                    insert.setInt(1, 4);
+                    insert.setString(2, Instant.now().toString());
+                    insert.executeUpdate();
+                }
+            }
         }
     }
 
@@ -245,6 +258,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 audit.setString(3, Instant.now().toString());
                 audit.executeUpdate();
             }
+            synchronizeConfigurationProjection(connection, state);
             synchronizeRuntimeProjection(connection, state);
             connection.commit();
         } catch (SQLException exception) {
@@ -407,6 +421,159 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 insert.setString(3, record.getRequestSha256());
                 insert.setString(4, record.getRunId());
                 insert.setString(5, record.getCreatedAt());
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+    }
+
+    private void synchronizeConfigurationProjection(Connection connection, EngineState state) throws SQLException {
+        String projectionTime = state.getUpdatedAt() == null ? Instant.now().toString() : state.getUpdatedAt();
+        executeDelete(connection, "DELETE FROM schema_field");
+        executeDelete(connection, "DELETE FROM schema_definition");
+        executeDelete(connection, "DELETE FROM workflow_transition");
+        executeDelete(connection, "DELETE FROM workflow_definition");
+        executeDelete(connection, "DELETE FROM ontology_relation");
+        executeDelete(connection, "DELETE FROM ontology_attribute");
+        executeDelete(connection, "DELETE FROM ontology_type");
+        executeDelete(connection, "DELETE FROM service_registration");
+        executeDelete(connection, "DELETE FROM engine_model");
+
+        try (PreparedStatement insert = connection.prepareStatement(
+                "INSERT INTO engine_model(model_id, name, description, schema_version, workflow_version, initial_state, unknown_field_policy, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.EngineModel model : state.getModels()) {
+                insert.setString(1, model.getId());
+                insert.setString(2, model.getName());
+                insert.setString(3, model.getDescription());
+                insert.setInt(4, model.getSchemaVersion());
+                insert.setInt(5, model.getWorkflowVersion());
+                insert.setString(6, model.getInitialState());
+                insert.setString(7, model.getUnknownFieldPolicy());
+                insert.setString(8, model.getUpdatedAt() == null ? Instant.now().toString() : model.getUpdatedAt());
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+
+        try (PreparedStatement definitionInsert = connection.prepareStatement(
+                "INSERT INTO schema_definition(model_id, schema_version, published_at) VALUES (?, ?, ?)" );
+             PreparedStatement fieldInsert = connection.prepareStatement(
+                     "INSERT INTO schema_field(model_id, schema_version, field_name, field_type, required, field_version, default_value_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.EngineModel model : state.getModels()) {
+                List<cn.finalartical.reproduction.admin.SchemaVersionRecord> versions = model.getSchemaVersions();
+                if (versions.isEmpty()) {
+                    versions = Collections.singletonList(new cn.finalartical.reproduction.admin.SchemaVersionRecord(
+                            model.getSchemaVersion(), model.getUpdatedAt() == null ? Instant.now().toString() : model.getUpdatedAt(),
+                            model.getFields()));
+                }
+                for (cn.finalartical.reproduction.admin.SchemaVersionRecord version : versions) {
+                    definitionInsert.setString(1, model.getId());
+                    definitionInsert.setInt(2, version.getVersion());
+                    definitionInsert.setString(3, version.getPublishedAt() == null ? Instant.now().toString() : version.getPublishedAt());
+                    definitionInsert.addBatch();
+                    for (cn.finalartical.reproduction.admin.EngineField field : version.getFields()) {
+                        fieldInsert.setString(1, model.getId());
+                        fieldInsert.setInt(2, version.getVersion());
+                        fieldInsert.setString(3, field.getName());
+                        fieldInsert.setString(4, field.getType());
+                        fieldInsert.setInt(5, field.isRequired() ? 1 : 0);
+                        fieldInsert.setInt(6, field.getVersion());
+                        fieldInsert.setString(7, field.getDefaultValue() == null ? null : json(field.getDefaultValue()));
+                        fieldInsert.setString(8, projectionTime);
+                        fieldInsert.addBatch();
+                    }
+                }
+            }
+            definitionInsert.executeBatch();
+            fieldInsert.executeBatch();
+        }
+
+        try (PreparedStatement definitionInsert = connection.prepareStatement(
+                "INSERT INTO workflow_definition(model_id, workflow_version, initial_state, published_at) VALUES (?, ?, ?, ?)" );
+             PreparedStatement transitionInsert = connection.prepareStatement(
+                     "INSERT INTO workflow_transition(model_id, workflow_version, from_state, event, to_state, updated_at) VALUES (?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.EngineModel model : state.getModels()) {
+                List<cn.finalartical.reproduction.admin.WorkflowVersionRecord> versions = model.getWorkflowVersions();
+                if (versions.isEmpty()) {
+                    versions = Collections.singletonList(new cn.finalartical.reproduction.admin.WorkflowVersionRecord(
+                            model.getWorkflowVersion(), model.getUpdatedAt() == null ? Instant.now().toString() : model.getUpdatedAt(),
+                            model.getInitialState(), model.getTransitions()));
+                }
+                for (cn.finalartical.reproduction.admin.WorkflowVersionRecord version : versions) {
+                    definitionInsert.setString(1, model.getId());
+                    definitionInsert.setInt(2, version.getVersion());
+                    definitionInsert.setString(3, version.getInitialState());
+                    definitionInsert.setString(4, version.getPublishedAt() == null ? Instant.now().toString() : version.getPublishedAt());
+                    definitionInsert.addBatch();
+                    for (cn.finalartical.reproduction.admin.EngineTransition transition : version.getTransitions()) {
+                        transitionInsert.setString(1, model.getId());
+                        transitionInsert.setInt(2, version.getVersion());
+                        transitionInsert.setString(3, transition.getFromState());
+                        transitionInsert.setString(4, transition.getEvent());
+                        transitionInsert.setString(5, transition.getToState());
+                        transitionInsert.setString(6, projectionTime);
+                        transitionInsert.addBatch();
+                    }
+                }
+            }
+            definitionInsert.executeBatch();
+            transitionInsert.executeBatch();
+        }
+
+        try (PreparedStatement typeInsert = connection.prepareStatement(
+                "INSERT INTO ontology_type(ontology_type_id, label, description, type_version, created_at) VALUES (?, ?, ?, ?, ?)" );
+             PreparedStatement attributeInsert = connection.prepareStatement(
+                     "INSERT INTO ontology_attribute(ontology_type_id, attribute_name, attribute_kind, type_version, created_at) VALUES (?, ?, ?, ?, ?)" );
+             PreparedStatement relationInsert = connection.prepareStatement(
+                     "INSERT INTO ontology_relation(ontology_type_id, relation_name, target_type, cardinality, type_version, created_at) VALUES (?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.OntologyTypeConfig type : state.getOntologyTypes()) {
+                typeInsert.setString(1, type.getId());
+                typeInsert.setString(2, type.getLabel());
+                typeInsert.setString(3, type.getDescription());
+                typeInsert.setInt(4, 1);
+                typeInsert.setString(5, projectionTime);
+                typeInsert.addBatch();
+                for (String attribute : type.getFixedAttributes()) {
+                    attributeInsert.setString(1, type.getId());
+                    attributeInsert.setString(2, attribute);
+                    attributeInsert.setString(3, "FIXED");
+                    attributeInsert.setInt(4, 1);
+                    attributeInsert.setString(5, projectionTime);
+                    attributeInsert.addBatch();
+                }
+                for (String attribute : type.getDynamicAttributes()) {
+                    attributeInsert.setString(1, type.getId());
+                    attributeInsert.setString(2, attribute);
+                    attributeInsert.setString(3, "DYNAMIC");
+                    attributeInsert.setInt(4, 1);
+                    attributeInsert.setString(5, projectionTime);
+                    attributeInsert.addBatch();
+                }
+                for (cn.finalartical.reproduction.admin.OntologyRelationConfig relation : type.getRelations()) {
+                    relationInsert.setString(1, type.getId());
+                    relationInsert.setString(2, relation.getName());
+                    relationInsert.setString(3, relation.getTargetType());
+                    relationInsert.setString(4, relation.getCardinality());
+                    relationInsert.setInt(5, 1);
+                    relationInsert.setString(6, projectionTime);
+                    relationInsert.addBatch();
+                }
+            }
+            typeInsert.executeBatch();
+            attributeInsert.executeBatch();
+            relationInsert.executeBatch();
+        }
+
+        try (PreparedStatement insert = connection.prepareStatement(
+                "INSERT INTO service_registration(service_id, name, provider, status, endpoint, version, registered_at) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.ServiceRegistration service : state.getServices()) {
+                insert.setString(1, service.getId());
+                insert.setString(2, service.getName());
+                insert.setString(3, service.getProvider());
+                insert.setString(4, service.getStatus());
+                insert.setString(5, service.getEndpoint());
+                insert.setString(6, service.getVersion());
+                insert.setString(7, projectionTime);
                 insert.addBatch();
             }
             insert.executeBatch();

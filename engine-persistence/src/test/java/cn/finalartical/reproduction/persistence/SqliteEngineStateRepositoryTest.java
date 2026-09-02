@@ -34,6 +34,15 @@ public class SqliteEngineStateRepositoryTest {
         assertEquals("confidence", field.getName());
         assertEquals(5, reloaded.getModels().get(0).getFields().size());
         assertTrue(Files.size(directory.resolve("engine.db")) > 0);
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + directory.resolve("engine.db").toAbsolutePath());
+             ResultSet result = connection.createStatement().executeQuery(
+                     "SELECT (SELECT max(version) FROM schema_version), (SELECT count(*) FROM engine_model), " +
+                             "(SELECT count(*) FROM schema_field WHERE field_name = 'confidence')")) {
+            assertTrue(result.next());
+            assertEquals(4, result.getInt(1));
+            assertEquals(2, result.getInt(2));
+            assertTrue(result.getInt(3) >= 1);
+        }
     }
 
     @Test
@@ -84,10 +93,24 @@ public class SqliteEngineStateRepositoryTest {
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT max(version) FROM schema_version), input_values_json, attempt, retry_of_run_id FROM runtime_run WHERE run_id = '" + written.getId() + "'")) {
             assertTrue(result.next());
-            assertEquals(3, result.getInt(1));
+            assertEquals(4, result.getInt(1));
             assertTrue(result.getString(2).contains("重启恢复"));
             assertEquals(1, result.getInt(3));
             assertEquals(null, result.getString(4));
+        }
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             ResultSet result = connection.createStatement().executeQuery(
+                     "SELECT (SELECT count(*) FROM engine_model), (SELECT count(*) FROM schema_definition), " +
+                             "(SELECT count(*) FROM schema_field WHERE field_name = 'candidateName'), " +
+                             "(SELECT count(*) FROM workflow_transition), (SELECT count(*) FROM ontology_type), " +
+                             "(SELECT count(*) FROM service_registration)")) {
+            assertTrue(result.next());
+            assertEquals(2, result.getInt(1));
+            assertTrue(result.getInt(2) >= 2);
+            assertTrue(result.getInt(3) >= 1);
+            assertTrue(result.getInt(4) >= 2);
+            assertTrue(result.getInt(5) >= 2);
+            assertTrue(result.getInt(6) >= 2);
         }
     }
 }
