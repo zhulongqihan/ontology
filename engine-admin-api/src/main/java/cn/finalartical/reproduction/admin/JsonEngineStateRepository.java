@@ -66,6 +66,7 @@ public final class JsonEngineStateRepository implements EngineStateRepository {
                 Files.createDirectories(parent);
             }
             state.setRevision(expectedRevision + 1L);
+            TraceLifecycle.markPersistenceCommitted(state);
             byte[] json = mapper.writerWithDefaultPrettyPrinter()
                     .writeValueAsString(state)
                     .getBytes(StandardCharsets.UTF_8);

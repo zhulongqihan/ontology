@@ -61,6 +61,7 @@ public final class OntologyGraphValidator {
 
         Set<String> edgeKeys = new HashSet<String>();
         Map<String, Integer> relationCounts = new HashMap<String, Integer>();
+        Map<String, Integer> inverseRelationCounts = new HashMap<String, Integer>();
         for (Object item : relations) {
             if (!(item instanceof Map)) {
                 throw new IllegalArgumentException("ontology relations must be objects");
@@ -98,6 +99,10 @@ public final class OntologyGraphValidator {
             String countKey = sourceId + "\u0000" + relationName;
             relationCounts.put(countKey, relationCounts.containsKey(countKey)
                     ? relationCounts.get(countKey) + 1 : 1);
+            String inverseCountKey = sourceDefinition.getId() + "\u0000" + relationName
+                    + "\u0000" + targetId;
+            inverseRelationCounts.put(inverseCountKey, inverseRelationCounts.containsKey(inverseCountKey)
+                    ? inverseRelationCounts.get(inverseCountKey) + 1 : 1);
         }
 
         for (Map.Entry<String, OntologyTypeDefinition> object : objectDefinitions.entrySet()) {
@@ -108,6 +113,22 @@ public final class OntologyGraphValidator {
                     throw new IllegalArgumentException("ontology relation cardinality violated for "
                             + object.getKey() + ":" + definition.getName() + ", cardinality="
                             + definition.getCardinality() + ", actualTargets=" + actualTargets);
+                }
+                OntologyTypeDefinition targetDefinition = findType(types, definition.getTargetType());
+                for (Map.Entry<String, String> candidate : objectTypes.entrySet()) {
+                    if (!targetDefinition.getId().equals(candidate.getValue())) {
+                        continue;
+                    }
+                    String inverseCountKey = object.getValue().getId() + "\u0000"
+                            + definition.getName() + "\u0000" + candidate.getKey();
+                    int actualSources = inverseRelationCounts.containsKey(inverseCountKey)
+                            ? inverseRelationCounts.get(inverseCountKey) : 0;
+                    if (!definition.allowsSourceCount(actualSources)) {
+                        throw new IllegalArgumentException("ontology inverse cardinality violated for "
+                                + candidate.getKey() + " via " + object.getKey() + ":"
+                                + definition.getName() + ", cardinality=" + definition.getCardinality()
+                                + ", actualSources=" + actualSources);
+                    }
                 }
             }
         }

@@ -40,6 +40,10 @@ public final class ReproductionApplication {
             runContractExperiment(args);
             return;
         }
+        if (args.length > 0 && "experiments".equals(args[0])) {
+            runExperiments(args);
+            return;
+        }
 
         FlexibleEngine engine = new FlexibleEngine(
                 Arrays.asList(
@@ -78,9 +82,10 @@ public final class ReproductionApplication {
                     ? Paths.get(args[2])
                     : Paths.get("data", "flexible-engine.db");
             Path legacyJsonPath = Paths.get("data", "engine-state.json");
+            boolean importLegacy = args.length <= 3 || !"--no-legacy".equals(args[3]);
             EngineStateRepository repository = statePath.toString().toLowerCase().endsWith(".json")
                     ? new JsonEngineStateRepository(statePath)
-                    : new SqliteEngineStateRepository(statePath, legacyJsonPath);
+                    : new SqliteEngineStateRepository(statePath, importLegacy ? legacyJsonPath : null);
             final EngineAdminServer server = EngineAdminServer.start(port, repository);
             Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
                 @Override
@@ -90,9 +95,10 @@ public final class ReproductionApplication {
             }));
             System.out.println("admin_url=http://127.0.0.1:" + server.getPort());
             System.out.println("state_path=" + statePath.toAbsolutePath());
-            if (!statePath.toString().toLowerCase().endsWith(".json")) {
+            if (!statePath.toString().toLowerCase().endsWith(".json") && importLegacy) {
                 System.out.println("legacy_json_path=" + legacyJsonPath.toAbsolutePath());
             }
+            System.out.println("legacy_import=" + importLegacy);
             System.out.println("data_identity=" + cn.finalartical.reproduction.admin.EngineAdminService.DATA_IDENTITY);
             Thread.currentThread().join();
         } catch (InterruptedException exception) {
@@ -122,6 +128,22 @@ public final class ReproductionApplication {
             System.out.println("output=" + output.toAbsolutePath());
         } catch (Exception exception) {
             throw new IllegalStateException("contract experiment failed", exception);
+        }
+    }
+
+    private static void runExperiments(String[] args) {
+        try {
+            Path cases = args.length > 1 ? Paths.get(args[1])
+                    : Paths.get("experiments", "contract-20", "contract-20.csv");
+            Path output = args.length > 2 ? Paths.get(args[2])
+                    : Paths.get("runs", "reproduction-suite", "latest");
+            Map<String, Object> report = new ReproductionExperimentSuite().run(cases, output);
+            System.out.println("experiment=reproduction-abc");
+            System.out.println("data_identity=ENGINE_EXPERIMENT_RESULT");
+            System.out.println("output=" + output.toAbsolutePath());
+            System.out.println("sections=" + report.keySet());
+        } catch (Exception exception) {
+            throw new IllegalStateException("reproduction experiments failed", exception);
         }
     }
 }

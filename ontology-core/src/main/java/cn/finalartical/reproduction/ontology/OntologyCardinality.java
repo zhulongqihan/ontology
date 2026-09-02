@@ -55,6 +55,16 @@ public final class OntologyCardinality {
         return Integer.parseInt(targetMultiplicity) == count;
     }
 
+    public boolean allowsSourceCount(int count) {
+        if (count < 0) {
+            return false;
+        }
+        if ("N".equals(sourceMultiplicity)) {
+            return true;
+        }
+        return Integer.parseInt(sourceMultiplicity) == count;
+    }
+
     private static boolean validMultiplicity(String value) {
         if ("N".equals(value) || "*".equals(value)) {
             return true;

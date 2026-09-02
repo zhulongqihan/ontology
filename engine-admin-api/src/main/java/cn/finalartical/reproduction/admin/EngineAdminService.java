@@ -41,6 +41,7 @@ public final class EngineAdminService {
         this.state = repository.load();
         boolean changed = migrateProductIdentity();
         changed = normalizeModelVersions() || changed;
+        changed = normalizeModelOntologyBindings() || changed;
         changed = normalizeOntologyTypes() || changed;
         changed = normalizeContexts() || changed;
         changed = normalizeServiceBindings() || changed;
@@ -52,6 +53,28 @@ public final class EngineAdminService {
             save();
         }
         this.runtimeService = new EngineRuntimeService(repository, state);
+    }
+
+    /**
+     * Migrate the one historical exact-id convention into durable metadata.
+     * This is deliberately a one-time load migration; runtime execution never
+     * falls back to model names or ontology labels.
+     */
+    private boolean normalizeModelOntologyBindings() {
+        boolean changed = false;
+        for (EngineModel model : state.getModels()) {
+            if (model.getOntologyTypeId() != null) {
+                continue;
+            }
+            for (OntologyTypeConfig type : state.getOntologyTypes()) {
+                if (model.getId().equals(type.getId())) {
+                    model.setOntologyTypeId(type.getId());
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        return changed;
     }
 
     private boolean migrateProductIdentity() {
@@ -92,6 +115,10 @@ public final class EngineAdminService {
             }
             if (isLegacyRuntimeRun(run)) {
                 run.setDataIdentity(LEGACY_RUNTIME_IDENTITY);
+                changed = true;
+            }
+            if (run.getTrace() != null && isBlank(run.getTrace().getLifecycle())) {
+                run.getTrace().setLifecycle("LEGACY_UNKNOWN");
                 changed = true;
             }
         }
@@ -160,6 +187,8 @@ public final class EngineAdminService {
         }
         EngineModel model = new EngineModel(id, requiredText(payload, "name"),
                 textValue(payload.get("description"), ""), 1, initialState);
+        String ontologyTypeId = optionalOntologyTypeId(payload, "ontologyTypeId");
+        model.setOntologyTypeId(ontologyTypeId);
         model.getStates().add(initialState);
         String publishedAt = Instant.now().toString();
         model.setUpdatedAt(publishedAt);
@@ -171,6 +200,7 @@ public final class EngineAdminService {
                 change("model.id", null, id),
                 change("model.name", null, model.getName()),
                 change("model.initialState", null, initialState),
+                change("model.ontologyTypeId", null, ontologyTypeId),
                 change("model.schemaVersion", null, 1),
                 change("model.workflowVersion", null, 1)));
         touch(state);
@@ -180,6 +210,25 @@ public final class EngineAdminService {
 
     public synchronized EngineModel model(String modelId) {
         return copy(modelRef(modelId), EngineModel.class);
+    }
+
+    public synchronized EngineModel updateModelOntologyBinding(String modelId, Map<String, Object> payload) {
+        EngineModel model = modelRef(modelId);
+        if (payload == null || !payload.containsKey("ontologyTypeId")) {
+            throw new IllegalArgumentException("ontologyTypeId is required; use null to unbind");
+        }
+        String next = optionalOntologyTypeId(payload, "ontologyTypeId");
+        String previous = model.getOntologyTypeId();
+        if (equalsNullable(previous, next)) {
+            return copy(model, EngineModel.class);
+        }
+        model.setOntologyTypeId(next);
+        appendAudit("MODEL_ONTOLOGY_BINDING_UPDATED", "EngineModel", modelId,
+                "ontologyTypeId=" + (next == null ? "null" : next), changes(
+                        change("model.ontologyTypeId", previous, next)));
+        touch(model);
+        save();
+        return copy(model, EngineModel.class);
     }
 
     private EngineModel modelRef(String modelId) {
@@ -518,6 +567,15 @@ public final class EngineAdminService {
         throw new IllegalArgumentException("ontology type not found: " + typeId);
     }
 
+    private OntologyTypeConfig ontologyTypeRefExact(String typeId) {
+        for (OntologyTypeConfig type : state.getOntologyTypes()) {
+            if (type.getId().equals(typeId)) {
+                return type;
+            }
+        }
+        throw new IllegalArgumentException("ontology type id not found: " + typeId);
+    }
+
     private ServiceRegistration serviceRef(String serviceId) {
         for (ServiceRegistration service : state.getServices()) {
             if (serviceId.equals(service.getId())) {
@@ -646,6 +704,9 @@ public final class EngineAdminService {
         for (EngineModel model : state.getModels()) {
             if (model.getId() == null || model.getId().trim().isEmpty()) {
                 throw new IllegalStateException("model id must not be blank");
+            }
+            if (model.getOntologyTypeId() != null) {
+                ontologyTypeRefExact(model.getOntologyTypeId());
             }
             try {
                 UnknownFieldPolicy.valueOf(model.getUnknownFieldPolicy().trim().toUpperCase());
@@ -971,6 +1032,22 @@ public final class EngineAdminService {
             throw new IllegalArgumentException(key + " must not be empty");
         }
         return value;
+    }
+
+    private String optionalOntologyTypeId(Map<String, Object> payload, String key) {
+        if (payload == null || !payload.containsKey(key) || payload.get(key) == null) {
+            return null;
+        }
+        String value = String.valueOf(payload.get(key)).trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+        ontologyTypeRefExact(value);
+        return value;
+    }
+
+    private static boolean equalsNullable(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
     private <T> T copy(T value, Class<T> type) {

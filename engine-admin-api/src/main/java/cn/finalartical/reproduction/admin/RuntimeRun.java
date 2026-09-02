@@ -8,6 +8,7 @@ import java.util.Map;
 public class RuntimeRun {
     private String id;
     private String modelId;
+    private String ontologyTypeId;
     private String contextId;
     private String engineVersion;
     private int schemaVersion;
@@ -51,6 +52,14 @@ public class RuntimeRun {
 
     public void setModelId(String modelId) {
         this.modelId = modelId;
+    }
+
+    public String getOntologyTypeId() {
+        return ontologyTypeId;
+    }
+
+    public void setOntologyTypeId(String ontologyTypeId) {
+        this.ontologyTypeId = ontologyTypeId;
     }
 
     public String getContextId() {

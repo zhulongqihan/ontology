@@ -54,6 +54,32 @@ public class OntologyGraphValidatorTest {
         ));
     }
 
+    @Test
+    public void rejectsInverseCardinalityWhenOneTargetHasTwoSources() {
+        OntologyTypeDefinition parent = new OntologyTypeDefinition("parent", "Parent",
+                attrs("name"), Collections.<String>emptyList(),
+                Arrays.asList(relation("contains", "child", "1:N")));
+        OntologyTypeDefinition child = new OntologyTypeDefinition("child", "Child",
+                attrs("name"), Collections.<String>emptyList(), Collections.<OntologyRelationDefinition>emptyList());
+        Map<String, Object> graph = new LinkedHashMap<String, Object>();
+        graph.put("rootObjectId", "p-1");
+        graph.put("objects", Arrays.<Object>asList(
+                object("p-1", "parent", attrsMap("name", "P1")),
+                object("p-2", "parent", attrsMap("name", "P2")),
+                object("c-1", "child", attrsMap("name", "C1"))));
+        graph.put("relations", Arrays.<Object>asList(
+                edge("p-1", "contains", "c-1"), edge("p-2", "contains", "c-1")));
+        try {
+            new OntologyGraphValidator().validate(graph, Arrays.asList(parent, child));
+        } catch (IllegalArgumentException expected) {
+            if (expected.getMessage().contains("inverse cardinality")) {
+                return;
+            }
+            throw expected;
+        }
+        throw new AssertionError("inverse source multiplicity must be enforced");
+    }
+
     private static OntologyTypeDefinition type(String id, String label, List<String> attributes,
                                                 OntologyRelationDefinition... relations) {
         return new OntologyTypeDefinition(id, label, attributes,

@@ -7,6 +7,8 @@ public class EngineModel {
     private String id;
     private String name;
     private String description;
+    /** Explicit root ontology type. Null means this model is not ontology-backed. */
+    private String ontologyTypeId;
     private int schemaVersion;
     private int workflowVersion = 1;
     private String initialState;
@@ -52,6 +54,15 @@ public class EngineModel {
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public String getOntologyTypeId() {
+        return ontologyTypeId;
+    }
+
+    public void setOntologyTypeId(String ontologyTypeId) {
+        this.ontologyTypeId = ontologyTypeId == null || ontologyTypeId.trim().isEmpty()
+                ? null : ontologyTypeId.trim();
     }
 
     public int getSchemaVersion() {

@@ -94,6 +94,21 @@ public class EngineAdminServerTest {
     }
 
     @Test
+    public void httpExposesExplicitModelOntologyBinding() throws Exception {
+        Path path = Files.createTempDirectory("engine-http-binding").resolve("state.json");
+        EngineAdminServer server = EngineAdminServer.start(0, path);
+        try {
+            HttpResponse binding = request(server, "PUT", "/api/models/interview-session/ontology-binding",
+                    "{\"ontologyTypeId\":\"questionnaire\"}");
+            assertEquals(200, binding.status);
+            assertTrue(binding.body.contains("ontologyTypeId"));
+            assertTrue(binding.body.contains("questionnaire"));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
     public void httpConfigurationUpdatesAndErrorsHaveStableContracts() throws Exception {
         Path path = Files.createTempDirectory("engine-http-contract").resolve("state.json");
         EngineAdminServer server = EngineAdminServer.start(0, path);

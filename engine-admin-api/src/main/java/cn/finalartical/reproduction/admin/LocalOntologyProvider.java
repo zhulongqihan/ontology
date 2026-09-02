@@ -11,7 +11,7 @@ import java.util.Map;
 
 final class LocalOntologyProvider implements OntologyProvider {
     @Override
-    public Map<String, Object> assemble(String modelId, String contextId, Map<String, Object> values,
+    public Map<String, Object> assemble(String modelId, String ontologyTypeId, String contextId, Map<String, Object> values,
                                         Object input, List<OntologyTypeDefinition> definitions) {
         if (input == null && !(values.get("subjects") instanceof List)) {
             return new LinkedHashMap<String, Object>();
@@ -22,7 +22,10 @@ final class LocalOntologyProvider implements OntologyProvider {
         Map<String, Object> rootAttributes = new LinkedHashMap<String, Object>(values);
         Map<String, Object> root = new LinkedHashMap<String, Object>();
         root.put("id", contextId);
-        root.put("type", ontologyTypeId(modelId, definitions));
+        if (ontologyTypeId == null || ontologyTypeId.trim().isEmpty()) {
+            throw new IllegalArgumentException("model has no explicit ontology binding: " + modelId);
+        }
+        root.put("type", ontologyTypeId(ontologyTypeId, definitions));
         root.put("attributes", rootAttributes);
         objects.add(root);
         Object subjects = values.get("subjects");

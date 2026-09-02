@@ -9,8 +9,15 @@ import org.junit.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.ConcurrentModificationException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -45,7 +52,7 @@ public class SqliteEngineStateRepositoryTest {
                      "SELECT (SELECT max(version) FROM schema_version), (SELECT count(*) FROM engine_model), " +
                              "(SELECT count(*) FROM schema_field WHERE field_name = 'confidence')")) {
             assertTrue(result.next());
-            assertEquals(8, result.getInt(1));
+            assertEquals(11, result.getInt(1));
             assertEquals(2, result.getInt(2));
             assertTrue(result.getInt(3) >= 1);
         }
@@ -342,7 +349,7 @@ public class SqliteEngineStateRepositoryTest {
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT max(version) FROM schema_version), input_values_json, attempt, retry_of_run_id FROM runtime_run WHERE run_id = '" + written.getId() + "'")) {
             assertTrue(result.next());
-            assertEquals(8, result.getInt(1));
+            assertEquals(11, result.getInt(1));
             assertTrue(result.getString(2).contains("重启恢复"));
             assertEquals(1, result.getInt(3));
             assertEquals(null, result.getString(4));
@@ -361,6 +368,63 @@ public class SqliteEngineStateRepositoryTest {
             assertTrue(result.getInt(5) >= 2);
             assertTrue(result.getInt(6) >= 2);
         }
+    }
+
+    @Test
+    public void serializesCrossInstanceWritersAndAllowsIdempotentRecoveryAfterConflict() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-concurrency");
+        Path database = directory.resolve("engine.db");
+        new SqliteEngineStateRepository(database).load();
+        final EngineAdminService first = new EngineAdminService(new SqliteEngineStateRepository(database));
+        final EngineAdminService second = new EngineAdminService(new SqliteEngineStateRepository(database));
+        final Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "interview-session");
+        payload.put("contextId", "ctx-concurrent-idempotency");
+        payload.put("event", "startInterview");
+        payload.put("idempotencyKey", "cross-instance-1");
+        payload.put("values", new LinkedHashMap<String, Object>() {{
+            put("candidateName", "并发恢复");
+        }});
+
+        final CountDownLatch ready = new CountDownLatch(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        List<Future<RuntimeRun>> futures = new ArrayList<Future<RuntimeRun>>();
+        futures.add(executor.submit(() -> {
+            ready.countDown();
+            ready.await();
+            return first.execute(payload);
+        }));
+        futures.add(executor.submit(() -> {
+            ready.countDown();
+            ready.await();
+            return second.execute(payload);
+        }));
+
+        int successes = 0;
+        int conflicts = 0;
+        for (Future<RuntimeRun> future : futures) {
+            try {
+                assertEquals("PASSED", future.get().getStatus());
+                successes++;
+            } catch (Exception exception) {
+                Throwable cause = exception.getCause() == null ? exception : exception.getCause();
+                if (cause instanceof ConcurrentModificationException) {
+                    conflicts++;
+                } else {
+                    throw exception;
+                }
+            }
+        }
+        executor.shutdownNow();
+
+        assertEquals(1, successes);
+        assertEquals(1, conflicts);
+        EngineAdminService recovered = new EngineAdminService(new SqliteEngineStateRepository(database));
+        RuntimeRun replayed = recovered.execute(payload);
+        assertEquals(1, recovered.runs().size());
+        assertEquals("PASSED", replayed.getStatus());
+        assertEquals("cross-instance-1", replayed.getIdempotencyKey());
+        assertEquals("COMMITTED", replayed.getTrace().getLifecycle());
     }
 
     @Test

@@ -10,6 +10,7 @@ public class TraceRecord {
     private String endedAt;
     private long durationMs;
     private String status;
+    private String lifecycle;
     private boolean sealed;
     private List<TraceSpanRecord> spans = new ArrayList<TraceSpanRecord>();
 
@@ -28,6 +29,8 @@ public class TraceRecord {
     public void setDurationMs(long durationMs) { this.durationMs = durationMs; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getLifecycle() { return lifecycle; }
+    public void setLifecycle(String lifecycle) { this.lifecycle = lifecycle; }
     public boolean isSealed() { return sealed; }
     public void setSealed(boolean sealed) { this.sealed = sealed; }
     public List<TraceSpanRecord> getSpans() { return spans; }

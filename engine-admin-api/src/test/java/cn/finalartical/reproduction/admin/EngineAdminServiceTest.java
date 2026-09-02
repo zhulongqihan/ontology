@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.ConcurrentModificationException;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class EngineAdminServiceTest {
@@ -30,6 +31,54 @@ public class EngineAdminServiceTest {
         assertEquals("assessment-session", model.getId());
         assertEquals("DRAFT", model.getInitialState());
         assertEquals(3, service.models().size());
+    }
+
+    @Test
+    public void modelOntologyBindingIsExplicitVersionedAndAudited() throws Exception {
+        Path path = Files.createTempDirectory("engine-model-binding").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+
+        assertEquals("questionnaire", service.model("questionnaire").getOntologyTypeId());
+        EngineModel model = service.addModel(new LinkedHashMap<String, Object>() {{
+            put("id", "assessment-session");
+            put("name", "评估会话");
+            put("ontologyTypeId", "questionnaire");
+        }});
+        assertEquals("questionnaire", model.getOntologyTypeId());
+
+        EngineModel unbound = service.updateModelOntologyBinding("assessment-session",
+                new LinkedHashMap<String, Object>() {{ put("ontologyTypeId", null); }});
+        assertNull(unbound.getOntologyTypeId());
+        assertEquals("MODEL_ONTOLOGY_BINDING_UPDATED", service.auditEvents().get(0).getAction());
+        assertEquals("model.ontologyTypeId", service.auditEvents().get(0).getChanges().get(0).getPath());
+        assertEquals("questionnaire", service.auditEvents().get(0).getChanges().get(0).getBeforeValue());
+        assertNull(service.auditEvents().get(0).getChanges().get(0).getAfterValue());
+        assertNull(new EngineAdminService(new JsonEngineStateRepository(path))
+                .model("assessment-session").getOntologyTypeId());
+    }
+
+    @Test
+    public void runtimeDoesNotInferOntologyBindingFromModelLabel() throws Exception {
+        Path path = Files.createTempDirectory("engine-model-binding-label").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        service.addModel(new LinkedHashMap<String, Object>() {{
+            put("id", "QuestionnaireView");
+            put("name", "Questionnaire");
+        }});
+        service.addTransition("QuestionnaireView", new LinkedHashMap<String, Object>() {{
+            put("fromState", "DRAFT"); put("event", "publish"); put("toState", "PUBLISHED");
+        }});
+
+        RuntimeRun run = service.execute(new LinkedHashMap<String, Object>() {{
+            put("modelId", "QuestionnaireView");
+            put("contextId", "ctx-unbound-label");
+            put("event", "publish");
+            put("ontology", new LinkedHashMap<String, Object>() {{ put("source", "explicit-test"); }});
+        }});
+
+        assertEquals("FAILED", run.getStatus());
+        assertEquals("ONTOLOGY_ASSEMBLY_ERROR", run.getErrorCode());
+        assertTrue(run.getValidationErrors().get(0).contains("no explicit ontology binding"));
     }
 
     @Test
@@ -306,9 +355,12 @@ public class EngineAdminServiceTest {
         assertEquals(2, run.getWorkflowVersion());
         assertEquals(run.getId(), run.getTrace().getRunId());
         assertTrue(run.getTrace().isSealed());
+        assertEquals("COMMITTED", run.getTrace().getLifecycle());
         assertEquals(Arrays.asList("request", "validation", "workflow", "ontology", "provider", "persistence", "response"),
                 spanNames(run));
         assertEquals("SKIPPED", run.getTrace().getSpans().get(4).getStatus());
+        assertEquals("COMMITTED", run.getTrace().getSpans().get(5).getStatus());
+        assertEquals("PREPARED", run.getTrace().getSpans().get(6).getStatus());
         assertEquals("IN_INTERVIEW", service.context("ctx-evidence").getState());
         assertEquals(run.getAfterSnapshot().getSha256(), service.context("ctx-evidence").getLastSnapshotSha256());
     }

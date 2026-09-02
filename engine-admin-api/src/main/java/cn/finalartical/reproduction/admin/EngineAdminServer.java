@@ -128,6 +128,11 @@ public final class EngineAdminServer {
             writeJson(exchange, 200, service.model(decode(segments.get(1))));
             return;
         }
+        if (segments.size() == 3 && "models".equals(segments.get(0))
+                && "ontology-binding".equals(segments.get(2)) && "PUT".equals(method)) {
+            writeJson(exchange, 200, service.updateModelOntologyBinding(decode(segments.get(1)), readPayload(exchange)));
+            return;
+        }
         if (segments.size() == 3 && "models".equals(segments.get(0)) && "fields".equals(segments.get(2)) && "POST".equals(method)) {
             writeJson(exchange, 201, service.addField(decode(segments.get(1)), readPayload(exchange)));
             return;

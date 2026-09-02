@@ -50,6 +50,7 @@ public final class DefaultEngineSeed {
         questionnaire.getFields().add(new EngineField("name", "STRING", true, 1, null));
         questionnaire.getFields().add(new EngineField("subjectId", "STRING", true, 1, null));
         questionnaire.getFields().add(new EngineField("subjectCount", "INTEGER", false, 1, 0));
+        questionnaire.setOntologyTypeId("questionnaire");
         questionnaire.setStates(Arrays.asList("DRAFT", "PUBLISHED", "ARCHIVED"));
         questionnaire.getTransitions().add(new EngineTransition("DRAFT", "publish", "PUBLISHED"));
         questionnaire.getTransitions().add(new EngineTransition("PUBLISHED", "archive", "ARCHIVED"));

@@ -146,12 +146,13 @@ final class EngineRuntimeService {
         Map<String, Object> ontologyGraph = new LinkedHashMap<String, Object>();
         boolean ontologyRequested = (payload != null && payload.get("ontology") != null)
                 || engine.values().get("subjects") instanceof List;
+        String boundOntologyTypeId = model.getOntologyTypeId();
         long ontologyStarted = System.nanoTime();
         if (errors.isEmpty()) {
             try {
                 if (ontologyRequested) {
-                    if ("unknown".equals(ontologyTypeIdOrUnknown(modelId))) {
-                        throw new IllegalArgumentException("ontology type not found: " + modelId);
+                    if (boundOntologyTypeId == null || boundOntologyTypeId.trim().isEmpty()) {
+                        throw new IllegalArgumentException("model has no explicit ontology binding: " + modelId);
                     }
                 }
             } catch (IllegalArgumentException exception) {
@@ -161,7 +162,8 @@ final class EngineRuntimeService {
         }
         addSpan(spans, traceId, "ontology", ontologyStarted, errors.isEmpty() ? "OK" : "FAILED",
                 mapOf("requested", String.valueOf(ontologyRequested),
-                        "rootType", ontologyRequested ? ontologyTypeIdOrUnknown(modelId) : "none"));
+                        "rootType", ontologyRequested ? String.valueOf(boundOntologyTypeId) : "none",
+                        "bindingSource", ontologyRequested ? "model.ontologyTypeId" : "none"));
 
         long providerStarted = System.nanoTime();
         Instant providerStartedAt = Instant.now();
@@ -181,7 +183,8 @@ final class EngineRuntimeService {
             providerError = "previous stage failed";
         } else {
             try {
-                ontologyGraph = invokeOntologyProvider(provider, modelId, contextId, engine.values(), ontologyInput);
+                ontologyGraph = invokeOntologyProvider(provider, modelId, boundOntologyTypeId, contextId,
+                        engine.values(), ontologyInput);
                 providerStatus = "OK";
             } catch (IllegalArgumentException exception) {
                 errors.add(exception.getMessage());
@@ -218,6 +221,7 @@ final class EngineRuntimeService {
         RuntimeRun run = new RuntimeRun();
         run.setId(runId);
         run.setModelId(modelId);
+        run.setOntologyTypeId(boundOntologyTypeId);
         run.setContextId(contextId);
         run.setEngineVersion(state.getEngineVersion());
         run.setSchemaVersion(schemaVersion);
@@ -269,10 +273,12 @@ final class EngineRuntimeService {
         }
 
         long persistenceStarted = System.nanoTime();
-        addSpan(spans, traceId, "persistence", persistenceStarted, "OK",
-                mapOf("contextCommitted", String.valueOf(passed)));
+        addSpan(spans, traceId, "persistence", persistenceStarted, "PREPARED",
+                mapOf("contextCommitted", String.valueOf(passed),
+                        "commitBoundary", "repository.save"));
         long responseStarted = System.nanoTime();
-        addSpan(spans, traceId, "response", responseStarted, "OK", Collections.<String, String>emptyMap());
+        addSpan(spans, traceId, "response", responseStarted, "PREPARED",
+                mapOf("deliveryBoundary", "caller-observation"));
         long durationMs = Math.max(1L, (System.nanoTime() - startedAt) / 1000000L);
         run.setDurationMs(durationMs);
         TraceRecord trace = trace(run, startedAtIso, spans, status, durationMs);
@@ -354,6 +360,7 @@ final class EngineRuntimeService {
         RuntimeRun rollback = new RuntimeRun();
         rollback.setId(rollbackRunId);
         rollback.setModelId(original.getModelId());
+        rollback.setOntologyTypeId(original.getOntologyTypeId());
         rollback.setContextId(original.getContextId());
         rollback.setEngineVersion(state.getEngineVersion());
         rollback.setSchemaVersion(original.getSchemaVersion());
@@ -449,7 +456,8 @@ final class EngineRuntimeService {
     }
 
     private Map<String, Object> invokeOntologyProvider(ServiceRegistration provider, String modelId,
-                                                       String contextId, Map<String, Object> values, Object input) {
+                                                       String ontologyTypeId, String contextId,
+                                                       Map<String, Object> values, Object input) {
         if (provider == null) {
             throw new IllegalArgumentException("ontology-assembler provider is not registered");
         }
@@ -460,7 +468,7 @@ final class EngineRuntimeService {
             throw new IllegalArgumentException("ontology-assembler provider implementation is not available in-process: "
                     + provider.getProvider());
         }
-        return ontologyProvider.assemble(modelId, contextId, values, input, ontologyDefinitions());
+        return ontologyProvider.assemble(modelId, ontologyTypeId, contextId, values, input, ontologyDefinitions());
     }
 
     private ServiceRegistration service(String serviceId) {
@@ -470,15 +478,6 @@ final class EngineRuntimeService {
             }
         }
         return null;
-    }
-
-    private String ontologyTypeIdOrUnknown(String modelId) {
-        for (OntologyTypeConfig type : state.getOntologyTypes()) {
-            if (modelId.equals(type.getId()) || (type.getLabel() != null && modelId.equalsIgnoreCase(type.getLabel()))) {
-                return type.getId();
-            }
-        }
-        return "unknown";
     }
 
     private EngineModel model(String modelId) {
@@ -628,6 +627,7 @@ final class EngineRuntimeService {
         trace.setEndedAt(Instant.now().toString());
         trace.setDurationMs(durationMs);
         trace.setStatus(status);
+        trace.setLifecycle("PREPARED");
         trace.setSealed(true);
         trace.setSpans(spans);
         return trace;

@@ -30,6 +30,10 @@ public final class OntologyRelationDefinition {
         return cardinality.allowsTargetCount(count);
     }
 
+    public boolean allowsSourceCount(int count) {
+        return cardinality.allowsSourceCount(count);
+    }
+
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }

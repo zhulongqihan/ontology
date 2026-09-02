@@ -18,6 +18,7 @@ export interface EngineModel {
   id: string
   name: string
   description: string
+  ontologyTypeId?: string | null
   schemaVersion: number
   workflowVersion: number
   initialState: string
@@ -70,6 +71,7 @@ export interface ServiceRegistration {
 export interface RuntimeRun {
   id: string
   modelId: string
+  ontologyTypeId?: string | null
   contextId: string
   status: 'PASSED' | 'FAILED' | 'ROLLED_BACK'
   dataIdentity: string
@@ -105,6 +107,7 @@ export interface ExecutionSnapshot {
   workflowVersion: number
   state: string
   status: string
+  lifecycle?: string
   capturedAt: string
   values: Record<string, unknown>
   sha256: string
@@ -129,6 +132,7 @@ export interface TraceRecord {
   durationMs: number
   status: string
   sealed: boolean
+  lifecycle?: string
   spans: TraceSpan[]
 }
 
@@ -209,6 +213,11 @@ export const engineApi = {
     request<EngineModel>('/api/models', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  updateModelOntologyBinding: (modelId: string, ontologyTypeId: string | null) =>
+    request<EngineModel>(`/api/models/${encodeURIComponent(modelId)}/ontology-binding`, {
+      method: 'PUT',
+      body: JSON.stringify({ ontologyTypeId }),
     }),
   ontologyTypes: () => request<OntologyType[]>('/api/ontology/types'),
   services: () => request<ServiceRegistration[]>('/api/services'),

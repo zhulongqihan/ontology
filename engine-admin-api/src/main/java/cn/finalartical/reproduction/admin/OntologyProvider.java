@@ -6,6 +6,6 @@ import java.util.List;
 import java.util.Map;
 
 interface OntologyProvider {
-    Map<String, Object> assemble(String modelId, String contextId, Map<String, Object> values,
+    Map<String, Object> assemble(String modelId, String ontologyTypeId, String contextId, Map<String, Object> values,
                                  Object input, List<OntologyTypeDefinition> definitions);
 }

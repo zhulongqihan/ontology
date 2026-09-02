@@ -37,6 +37,8 @@ Provider / Consumer 兼容调用
 - 工作流运行时：初始状态、事件、状态转换和非法事件拒绝。
 - 连续上下文：相同 `contextId` 会继承上次运行快照的状态和字段，实现跨请求迁移。
 - 本体模型：Questionnaire、Subject、Option 以及固定属性、动态属性和对象关系。
+- 显式本体绑定：Model 持久化 `ontologyTypeId`，Runtime Run 复制绑定；本体输入存在但模型未绑定时在装配门禁处拒绝，不按名称或 label fallback。
+- 双向关系约束：同时校验 source 与 target multiplicity，拒绝源端或目标端的 `1:1` 溢出。
 - 本地兼容层：Provider / Consumer 的可运行本地实现，明确使用 `local://` 地址。
 - Provider 观测：运行时以 `ontology-assembler` 为本地 in-process Provider 边界，Trace 记录注册服务、请求、响应、错误、状态和真实耗时；未请求本体时明确标记为 `SKIPPED`。
 - 管理 API：模型、字段、转换、本体类型、关系和服务注册的读取与写入。
@@ -47,8 +49,9 @@ Provider / Consumer 兼容调用
 - 契约回归：20 条接口契约规格、逐用例结果、由真实 Provider 调用测量生成的封存 Trace、报告和哈希输出。
 - 架构边界：管理读取结果全部深拷贝；关系和服务状态只能通过受控、审计化命令更新，避免 DTO 嵌套对象绕过版本和持久化。
 - HTTP 并发与错误协议：响应返回 `ETag` 和 `X-Trace-Id`，条件写入支持 `If-Match`；错误统一包含 `errorCode`、`message` 和 `traceId`。
-- 持久化完整性：SQLite 加载前校验 Schema/Workflow 版本链、字段版本、迁移字段、Run/Trace、Snapshot/Context 关联；v6 为 Trace Span 保存显式顺序号，不接受坏投影并回写兼容 JSON。
+- 持久化完整性：SQLite 加载前校验 Schema/Workflow 版本链、字段版本、迁移字段、Run/Trace、Snapshot/Context 关联；schema 11 保存模型/运行本体绑定和 Trace 生命周期，写入采用 `BEGIN IMMEDIATE`，不接受坏投影并回写兼容 JSON。
 - 审计链：配置和回滚审计事件携带 `beforeRevision/afterRevision` 以及结构化 `changes[{path,beforeValue,afterValue}]`，SQLite v8 校验差异 JSON 可加载；revision 表示写入归属，changes 表示字段内容差异。
+- 复现实验：A 机制对照、B 故障注入、C 重复性/消融；报告保存 data identity、source revision、seed 和结果摘要。
 
 ## 系统架构
 
@@ -99,6 +102,12 @@ mvn.cmd package
 java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar admin
 ```
 
+fresh SQLite 验证不应自动吸收历史 JSON，可显式关闭迁移入口：
+
+```powershell
+java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar admin 8787 output\playwright\fresh.db --no-legacy
+```
+
 也可以使用：
 
 ```powershell
@@ -133,6 +142,7 @@ npm.cmd run dev
 | `GET` | `/api/overview` | 引擎版本、能力、资源数量和最近运行 |
 | `GET/POST` | `/api/models` | 查询或注册柔性对象模型 |
 | `GET` | `/api/models/{id}` | 查询模型、Schema 和工作流 |
+| `PUT` | `/api/models/{id}/ontology-binding` | 显式绑定或解除模型本体根类型 |
 | `POST` | `/api/models/{id}/fields` | 写入动态字段并递增 Schema 版本 |
 | `POST` | `/api/models/{id}/fields/rename` | 改名并发布带显式迁移规则的新 Schema 版本 |
 | `POST` | `/api/models/{id}/fields/remove` | 删除字段并发布新 Schema 版本 |
@@ -184,12 +194,14 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：74/74 通过。
+- Maven 多模块测试：79/79 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
+- `experiments` 模式：A/B/C 机制、故障注入、重复性和消融实验可执行；3 个 seed 各 20/20 通过。
+- SQLite 跨实例并发：一个写入者成功，另一个得到 revision conflict；重载后相同幂等请求返回已提交 Run。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
 - 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行、快照/Trace/审计/幂等查询、重试回滚、SQLite 持久化和旧 JSON 迁移已完成实测。
-- 架构回归：74 个 Maven 测试通过；包含公开对象深拷贝、嵌套输入隔离、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match/CORS 预检、审计 revision 链、SQLite 坏投影拒绝、历史 legacy 运行保留和备份恢复完整性用例。详见 [架构审计 v0.5](docs/架构审计_v0.5.md) 与 [复现审稿报告](docs/复现审稿报告_v0.1.md)。
+- 架构回归：79 个 Maven 测试通过；包含显式绑定、双向基数、公开对象深拷贝、嵌套输入隔离、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match/CORS 预检、审计 revision 链、SQLite 事务、跨实例冲突、坏投影拒绝、历史 legacy 运行保留和备份恢复完整性用例。详见 [复现审查矩阵 v0.6](docs/复现审查矩阵_v0.6.md) 与 [复现审稿报告](docs/复现审稿报告_v0.1.md)。
 
 ## 论文与系统边界
 
@@ -208,7 +220,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 - SQLite 已建立配置域和运行域规范化表及事务投影；配置和运行事实读取已优先从规范化表重建，状态 JSON 仅保留为旧库兼容备份，加载前投影完整性闸门已加入。当前 revision、ETag/If-Match、字段级 before/after 差异和带 revision 链的状态写入审计均已具备。
 - 跨类型转换、Schema 版本回滚和更细粒度的兼容策略。
-- 故障注入、更细粒度的并发冲突恢复和重试策略配置。
+- 更细粒度的重试策略配置、远程 Provider 超时与跨部署环境的并发恢复。
 - 跨进程/跨服务的请求—响应—Provider 调用链；当前已完成本地 in-process Provider 的真实观测，不能把它等同于生产网络调用链。
 - 本体关系装配的更多跨类型、跨服务和兼容场景。
 - 将控制面导出升级为带格式版本的论文实验支撑层，并与引擎领域数据保持清晰边界。
