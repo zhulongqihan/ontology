@@ -49,7 +49,7 @@ Provider / Consumer 兼容调用
 - 契约回归：20 条接口契约规格、逐用例结果、由真实 Provider 调用测量生成的封存 Trace、报告和哈希输出。
 - 架构边界：管理读取结果全部深拷贝；关系和服务状态只能通过受控、审计化命令更新，避免 DTO 嵌套对象绕过版本和持久化。
 - HTTP 并发与错误协议：响应返回 `ETag` 和 `X-Trace-Id`，条件写入支持 `If-Match`；错误统一包含 `errorCode`、`message` 和 `traceId`。
-- 持久化完整性：SQLite 加载前校验 Schema/Workflow 版本链、字段版本、迁移字段、Run/Trace、Snapshot/Context 关联；schema 11 保存模型/运行本体绑定和 Trace 生命周期，写入采用 `BEGIN IMMEDIATE`，不接受坏投影并回写兼容 JSON。
+- 持久化完整性：SQLite 加载前校验 Schema/Workflow 版本链、字段版本、迁移字段、Run/Trace、Snapshot/Context 关联；schema 12 保存模型/运行本体绑定、Ontology version/hash 和 Trace 生命周期，写入采用 `BEGIN IMMEDIATE`，不接受坏投影并回写兼容 JSON。
 - 审计链：配置和回滚审计事件携带 `beforeRevision/afterRevision` 以及结构化 `changes[{path,beforeValue,afterValue}]`，SQLite v8 校验差异 JSON 可加载；revision 表示写入归属，changes 表示字段内容差异。
 - 复现实验：A 机制对照、B 故障注入、C 重复性/消融；报告保存 data identity、source revision、seed 和结果摘要。
 
@@ -194,14 +194,14 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：79/79 通过。
+- Maven 多模块测试：84/84 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
 - `experiments` 模式：A/B/C 机制、故障注入、重复性和消融实验可执行；3 个 seed 各 20/20 通过。
 - SQLite 跨实例并发：一个写入者成功，另一个得到 revision conflict；重载后相同幂等请求返回已提交 Run。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
 - 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行、快照/Trace/审计/幂等查询、重试回滚、SQLite 持久化和旧 JSON 迁移已完成实测。
-- 架构回归：79 个 Maven 测试通过；包含显式绑定、双向基数、公开对象深拷贝、嵌套输入隔离、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match/CORS 预检、审计 revision 链、SQLite 事务、跨实例冲突、坏投影拒绝、历史 legacy 运行保留和备份恢复完整性用例。详见 [复现审查矩阵 v0.6](docs/复现审查矩阵_v0.6.md) 与 [复现审稿报告](docs/复现审稿报告_v0.1.md)。
+- 架构回归：84 个 Maven 测试通过；包含显式绑定、Ontology version/hash、双向基数、公开对象深拷贝、嵌套输入隔离、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match/CORS 预检、审计 revision 链、SQLite 事务、跨实例冲突、坏投影拒绝、坏 Snapshot/Trace 拒绝、历史 legacy 运行保留、重启后幂等和隔离 Replay。详见 [当前审查状态 v0.7](docs/审查状态_v0.7.md)。
 
 ## 论文与系统边界
 

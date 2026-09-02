@@ -7,6 +7,8 @@ public class OntologyTypeConfig {
     private String id;
     private String label;
     private String description;
+    /** Monotonic definition version; a run records the exact version and hash. */
+    private int version = 1;
     private List<String> fixedAttributes = new ArrayList<String>();
     private List<String> dynamicAttributes = new ArrayList<String>();
     private List<OntologyRelationConfig> relations = new ArrayList<OntologyRelationConfig>();
@@ -42,6 +44,17 @@ public class OntologyTypeConfig {
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public int getVersion() {
+        return version;
+    }
+
+    public void setVersion(int version) {
+        if (version < 1) {
+            throw new IllegalArgumentException("ontology type version must be positive");
+        }
+        this.version = version;
     }
 
     public List<String> getFixedAttributes() {

@@ -191,6 +191,11 @@ public final class EngineAdminServer {
             writeJson(exchange, 200, service.retry(decode(segments.get(1))));
             return;
         }
+        if (segments.size() == 3 && "runs".equals(segments.get(0)) && "replay".equals(segments.get(2))
+                && "POST".equals(method)) {
+            writeJson(exchange, 200, service.replay(decode(segments.get(1))));
+            return;
+        }
         if (segments.size() == 3 && "runs".equals(segments.get(0)) && "rollback".equals(segments.get(2))
                 && "POST".equals(method)) {
             writeJson(exchange, 200, service.rollback(decode(segments.get(1))));

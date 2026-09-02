@@ -53,6 +53,12 @@ def audit_database(path, expected_schema, findings):
             if not result["payload_hash_matches"]:
                 finding(findings, "P0", "SQLite compatibility payload hash does not match its bytes",
                         "engine_state.revision=%s" % state["revision"])
+            latest_write = connection.execute(
+                "SELECT payload_sha256 FROM state_write ORDER BY write_id DESC LIMIT 1").fetchone()
+            result["latest_state_write_hash_matches"] = latest_write is not None and latest_write[0] == state["payload_sha256"]
+            if not result["latest_state_write_hash_matches"]:
+                finding(findings, "P0", "latest state_write hash does not describe the current payload",
+                        "state_write ORDER BY write_id DESC")
 
         tables = ["engine_model", "schema_definition", "workflow_definition", "ontology_type",
                   "service_registration", "runtime_context", "runtime_run", "execution_snapshot",
@@ -64,9 +70,13 @@ def audit_database(path, expected_schema, findings):
 
         legacy_runs = []
         current_runs_missing_trace = []
-        for run in connection.execute(
-                "SELECT run_id, engine_version, schema_version, workflow_version, trace_id "
-                "FROM runtime_run ORDER BY created_at, run_id"):
+        runtime_columns = {row[1] for row in connection.execute("PRAGMA table_info(runtime_run)")}
+        has_evidence_identity = {"ontology_version", "ontology_definition_sha256", "data_identity"}.issubset(runtime_columns)
+        runtime_query = "SELECT run_id, engine_version, schema_version, workflow_version, trace_id, data_identity"
+        if has_evidence_identity:
+            runtime_query += ", ontology_type_id, ontology_version, ontology_definition_sha256"
+        runtime_query += " FROM runtime_run ORDER BY created_at, run_id"
+        for run in connection.execute(runtime_query):
             valid_identity = bool(run["engine_version"]) and run["schema_version"] >= 1 and run["workflow_version"] >= 1
             trace_exists = connection.execute(
                 "SELECT 1 FROM trace WHERE trace_id = ? AND run_id = ?", (run["trace_id"], run["run_id"])
@@ -74,6 +84,9 @@ def audit_database(path, expected_schema, findings):
             snapshot_count = connection.execute(
                 "SELECT count(*) FROM execution_snapshot WHERE run_id = ?", (run["run_id"],)
             ).fetchone()[0]
+            current_identity = run["data_identity"] in (None, "ENGINE_RUNTIME_RESULT")
+            if has_evidence_identity and current_identity and run["ontology_type_id"] is not None:
+                valid_identity = valid_identity and run["ontology_version"] >= 1 and bool(run["ontology_definition_sha256"])
             if valid_identity and not trace_exists:
                 current_runs_missing_trace.append(run["run_id"])
             if not valid_identity or not trace_exists or snapshot_count < 2:
@@ -86,6 +99,13 @@ def audit_database(path, expected_schema, findings):
         if legacy_runs:
             finding(findings, "P1", "runtime rows are evidence-incomplete historical records and cannot support current-run claims",
                     ", ".join(legacy_runs))
+        if has_evidence_identity:
+            invalid_lifecycle = [row[0] for row in connection.execute(
+                "SELECT run_id FROM runtime_run JOIN trace USING (run_id) "
+                "WHERE data_identity = 'ENGINE_RUNTIME_RESULT' AND lifecycle NOT IN ('PREPARED', 'COMMITTED')")]
+            if invalid_lifecycle:
+                finding(findings, "P0", "current runtime rows have an invalid Trace lifecycle",
+                        ", ".join(invalid_lifecycle))
 
         providers = [dict(row) for row in connection.execute(
             "SELECT service_id, provider, status FROM service_registration ORDER BY service_id")]
@@ -162,7 +182,7 @@ def main():
     parser.add_argument("--sqlite", default="data/flexible-engine.db", type=Path)
     parser.add_argument("--legacy-json", default="data/engine-state.json", type=Path)
     parser.add_argument("--contract-report", type=Path)
-    parser.add_argument("--expected-schema-version", default=8, type=int)
+    parser.add_argument("--expected-schema-version", default=12, type=int)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 

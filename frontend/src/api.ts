@@ -54,6 +54,7 @@ export interface OntologyType {
   id: string
   label: string
   description: string
+  version: number
   fixedAttributes: string[]
   dynamicAttributes: string[]
   relations: OntologyRelation[]
@@ -72,6 +73,8 @@ export interface RuntimeRun {
   id: string
   modelId: string
   ontologyTypeId?: string | null
+  ontologyVersion?: number
+  ontologyDefinitionSha256?: string | null
   contextId: string
   status: 'PASSED' | 'FAILED' | 'ROLLED_BACK'
   dataIdentity: string
@@ -86,6 +89,7 @@ export interface RuntimeRun {
   workflowVersion?: number
   idempotencyKey?: string | null
   retryOfRunId?: string | null
+  replayOfRunId?: string | null
   attempt?: number
   contextRevision?: number
   contextCommitted?: boolean
@@ -95,6 +99,7 @@ export interface RuntimeRun {
   afterSnapshot?: ExecutionSnapshot
   trace?: TraceRecord
   ontologyGraph?: Record<string, unknown>
+  ontologyInput?: unknown
   values: Record<string, unknown>
   validationErrors: string[]
 }
@@ -189,15 +194,21 @@ export class ApiError extends Error {
 }
 
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
+let lastRevision: string | null = null
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+  headers.set('Content-Type', 'application/json')
+  const method = (init?.method ?? 'GET').toUpperCase()
+  if (method !== 'GET' && method !== 'OPTIONS' && lastRevision && !headers.has('If-Match')) {
+    headers.set('If-Match', lastRevision)
+  }
   const response = await fetch(`${apiBase}${path}`, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
+    headers,
   })
+  const revision = response.headers.get('ETag')
+  if (revision) lastRevision = revision
   const payload = await response.json().catch(() => null)
   if (!response.ok) {
     throw new ApiError(response.status, payload?.message ?? payload?.error ?? `API request failed: ${response.status}`,
@@ -209,7 +220,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const engineApi = {
   overview: () => request<EngineOverview>('/api/overview'),
   models: () => request<EngineModel[]>('/api/models'),
-  addModel: (payload: { id: string; name: string; description: string; initialState: string }) =>
+  addModel: (payload: { id: string; name: string; description: string; initialState: string; ontologyTypeId?: string | null }) =>
     request<EngineModel>('/api/models', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -229,6 +240,7 @@ export const engineApi = {
   idempotencyRecords: () => request<IdempotencyRecord[]>('/api/idempotency-records'),
   exportState: () => request<Record<string, unknown>>('/api/export'),
   retry: (runId: string) => request<RuntimeRun>(`/api/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST', body: '{}' }),
+  replay: (runId: string) => request<RuntimeRun>(`/api/runs/${encodeURIComponent(runId)}/replay`, { method: 'POST', body: '{}' }),
   rollback: (runId: string) => request<RuntimeRun>(`/api/runs/${encodeURIComponent(runId)}/rollback`, { method: 'POST', body: '{}' }),
   addField: (modelId: string, payload: { name: string; type: FieldType; required: boolean; defaultValue?: unknown }) =>
     request<EngineField>(`/api/models/${encodeURIComponent(modelId)}/fields`, {
@@ -255,7 +267,7 @@ export const engineApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  execute: (payload: { modelId: string; contextId?: string; event: string; values: Record<string, unknown> }) =>
+  execute: (payload: { modelId: string; contextId?: string; event: string; values: Record<string, unknown>; ontology?: unknown; idempotencyKey?: string }) =>
     request<RuntimeRun>('/api/runtime/execute', {
       method: 'POST',
       body: JSON.stringify(payload),

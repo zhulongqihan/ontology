@@ -9,6 +9,8 @@ public class RuntimeRun {
     private String id;
     private String modelId;
     private String ontologyTypeId;
+    private int ontologyVersion;
+    private String ontologyDefinitionSha256;
     private String contextId;
     private String engineVersion;
     private int schemaVersion;
@@ -23,6 +25,7 @@ public class RuntimeRun {
     private long durationMs;
     private String idempotencyKey;
     private String retryOfRunId;
+    private String replayOfRunId;
     private int attempt = 1;
     private long contextRevision;
     private boolean contextCommitted;
@@ -33,6 +36,7 @@ public class RuntimeRun {
     private Map<String, Object> values = new LinkedHashMap<String, Object>();
     private Map<String, Object> inputValues = new LinkedHashMap<String, Object>();
     private Map<String, Object> ontologyGraph = new LinkedHashMap<String, Object>();
+    private Object ontologyInput;
     private List<String> validationErrors = new ArrayList<String>();
 
     public RuntimeRun() {
@@ -60,6 +64,22 @@ public class RuntimeRun {
 
     public void setOntologyTypeId(String ontologyTypeId) {
         this.ontologyTypeId = ontologyTypeId;
+    }
+
+    public int getOntologyVersion() {
+        return ontologyVersion;
+    }
+
+    public void setOntologyVersion(int ontologyVersion) {
+        this.ontologyVersion = ontologyVersion;
+    }
+
+    public String getOntologyDefinitionSha256() {
+        return ontologyDefinitionSha256;
+    }
+
+    public void setOntologyDefinitionSha256(String ontologyDefinitionSha256) {
+        this.ontologyDefinitionSha256 = ontologyDefinitionSha256;
     }
 
     public String getContextId() {
@@ -174,6 +194,14 @@ public class RuntimeRun {
         this.retryOfRunId = retryOfRunId;
     }
 
+    public String getReplayOfRunId() {
+        return replayOfRunId;
+    }
+
+    public void setReplayOfRunId(String replayOfRunId) {
+        this.replayOfRunId = replayOfRunId;
+    }
+
     public int getAttempt() {
         return attempt;
     }
@@ -252,6 +280,14 @@ public class RuntimeRun {
 
     public void setOntologyGraph(Map<String, Object> ontologyGraph) {
         this.ontologyGraph = ontologyGraph == null ? new LinkedHashMap<String, Object>() : new LinkedHashMap<String, Object>(ontologyGraph);
+    }
+
+    public Object getOntologyInput() {
+        return ontologyInput;
+    }
+
+    public void setOntologyInput(Object ontologyInput) {
+        this.ontologyInput = ontologyInput;
     }
 
     public List<String> getValidationErrors() {

@@ -59,6 +59,20 @@ public final class JsonEngineStateRepository implements EngineStateRepository {
         write(state, expectedRevision);
     }
 
+    @Override
+    public synchronized void markPersistenceCommitted(EngineState state, String runId) {
+        if (state == null) {
+            throw new IllegalArgumentException("engine state must not be null");
+        }
+        long actualRevision = readRevision();
+        if (actualRevision != state.getRevision()) {
+            throw new ConcurrentModificationException("engine state revision conflict while marking trace: expected "
+                    + state.getRevision() + " but was " + actualRevision);
+        }
+        TraceLifecycle.markPersistenceCommitted(state, runId);
+        writeAtomic(state);
+    }
+
     private void write(EngineState state, long expectedRevision) {
         try {
             Path parent = path.toAbsolutePath().getParent();
@@ -66,7 +80,14 @@ public final class JsonEngineStateRepository implements EngineStateRepository {
                 Files.createDirectories(parent);
             }
             state.setRevision(expectedRevision + 1L);
-            TraceLifecycle.markPersistenceCommitted(state);
+            writeAtomic(state);
+        } catch (IOException exception) {
+            throw new IllegalStateException("cannot save engine state: " + path, exception);
+        }
+    }
+
+    private void writeAtomic(EngineState state) {
+        try {
             byte[] json = mapper.writerWithDefaultPrettyPrinter()
                     .writeValueAsString(state)
                     .getBytes(StandardCharsets.UTF_8);

@@ -18,15 +18,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 public final class ContractExperimentRunner {
     public ExperimentRunReport run(List<ContractCase> cases, long seed) {
         JsfExAssessService service = createService();
         List<ContractExecution> executions = new ArrayList<ContractExecution>();
-        for (ContractCase contractCase : cases) {
+        List<ContractCase> executionOrder = new ArrayList<ContractCase>(cases);
+        Collections.shuffle(executionOrder, new Random(seed));
+        for (ContractCase contractCase : executionOrder) {
             executions.add(execute(contractCase, service));
         }
         return new ExperimentRunReport("contract-20", seed, executions);

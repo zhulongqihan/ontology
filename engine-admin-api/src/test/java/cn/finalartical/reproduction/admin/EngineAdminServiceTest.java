@@ -1,6 +1,7 @@
 package cn.finalartical.reproduction.admin;
 
 import org.junit.Test;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +15,7 @@ import java.util.ConcurrentModificationException;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertNotEquals;
 
 public class EngineAdminServiceTest {
     @Test
@@ -363,6 +365,57 @@ public class EngineAdminServiceTest {
         assertEquals("PREPARED", run.getTrace().getSpans().get(6).getStatus());
         assertEquals("IN_INTERVIEW", service.context("ctx-evidence").getState());
         assertEquals(run.getAfterSnapshot().getSha256(), service.context("ctx-evidence").getLastSnapshotSha256());
+    }
+
+    @Test
+    public void runtimePersistsOntologyDefinitionIdentityAndReplaysFromBeforeSnapshot() throws Exception {
+        Path path = Files.createTempDirectory("engine-replay").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        service.addModel(new LinkedHashMap<String, Object>() {{
+            put("id", "replay-model"); put("name", "重放模型"); put("initialState", "DRAFT");
+            put("ontologyTypeId", "questionnaire");
+        }});
+        service.addTransition("replay-model", new LinkedHashMap<String, Object>() {{
+            put("fromState", "DRAFT"); put("event", "publish"); put("toState", "PUBLISHED");
+        }});
+
+        RuntimeRun original = service.execute(new LinkedHashMap<String, Object>() {{
+            put("modelId", "replay-model"); put("contextId", "ctx-original"); put("event", "publish");
+        }});
+        RuntimeRun replay = service.replay(original.getId());
+
+        assertEquals("questionnaire", original.getOntologyTypeId());
+        assertTrue(original.getOntologyVersion() >= 1);
+        assertTrue(original.getOntologyDefinitionSha256() != null && !original.getOntologyDefinitionSha256().isEmpty());
+        assertEquals(original.getId(), replay.getReplayOfRunId());
+        assertNotEquals(original.getContextId(), replay.getContextId());
+        assertEquals("PASSED", replay.getStatus());
+        assertEquals(2, service.runs().size());
+        RuntimeRun persisted = new EngineAdminService(new JsonEngineStateRepository(path)).run(replay.getId());
+        assertEquals(original.getOntologyDefinitionSha256(), persisted.getOntologyDefinitionSha256());
+    }
+
+    @Test
+    public void tamperedSnapshotHashIsRejectedBeforeTheStateIsExposed() throws Exception {
+        Path path = Files.createTempDirectory("engine-evidence-integrity").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        service.execute(new LinkedHashMap<String, Object>() {{
+            put("modelId", "interview-session"); put("contextId", "ctx-tamper"); put("event", "startInterview");
+            put("values", new LinkedHashMap<String, Object>() {{ put("candidateName", "完整性校验"); }});
+        }});
+        ObjectMapper mapper = new ObjectMapper();
+        Map<String, Object> document = mapper.readValue(Files.readAllBytes(path), Map.class);
+        List<Map<String, Object>> runs = (List<Map<String, Object>>) document.get("runs");
+        Map<String, Object> before = (Map<String, Object>) runs.get(0).get("beforeSnapshot");
+        before.put("sha256", "tampered");
+        Files.write(path, mapper.writeValueAsBytes(document));
+
+        try {
+            new EngineAdminService(new JsonEngineStateRepository(path));
+            throw new AssertionError("tampered snapshot must be rejected");
+        } catch (IllegalStateException expected) {
+            assertTrue(expected.getMessage().contains("snapshot sha256 mismatch"));
+        }
     }
 
     @Test

@@ -19,13 +19,13 @@ $body = Get-Content -LiteralPath $bodyPath -Raw
 $root = Get-Content -LiteralPath $rootPath -Raw
 $bib = Get-Content -LiteralPath $bibPath -Raw
 
-foreach ($term in @('RQ1', 'RQ2', 'RQ3', 'RQ4', 'ontologyTypeId', 'COMMITTED', 'PREPARED', 'A/B/C', 'BEGIN IMMEDIATE', '79 条')) {
+foreach ($term in @('RQ1', 'RQ2', 'RQ3', 'RQ4', 'ontologyTypeId', 'Ontology version', 'definition hash', 'COMMITTED', 'PREPARED', 'A/B/C', 'BEGIN IMMEDIATE', '84 条', 'Replay')) {
     if ($body.IndexOf($term, [StringComparison]::Ordinal) -lt 0 -and $root.IndexOf($term, [StringComparison]::Ordinal) -lt 0) {
         throw "paper source does not contain required term: $term"
     }
 }
 
-foreach ($legacy in @('74/74', '73 条自动化测试', '尚未设置独立', 'source multiplicity 目前只被解析保存')) {
+foreach ($legacy in @('74/74', '73 条自动化测试', '78 条当前 Maven 测试', '79 条自动化测试', '79/79', '尚未设置独立', 'source multiplicity 目前只被解析保存', 'schema 11')) {
     if ($body.IndexOf($legacy, [StringComparison]::Ordinal) -ge 0 -or $root.IndexOf($legacy, [StringComparison]::Ordinal) -ge 0) {
         throw "paper source still contains obsolete claim: $legacy"
     }
@@ -49,7 +49,9 @@ if ($RequireExperiment) {
         throw 'fault-injection result does not match the paper claim'
     }
     if ($report.C_repeatability_ablation.idempotent_unique_persisted_runs -ne 1 -or
-        -not $report.C_repeatability_ablation.contract_outcome_stable_across_seeds) {
+        -not $report.C_repeatability_ablation.contract_outcome_stable_across_seeds -or
+        -not $report.C_repeatability_ablation.same_seed_report_stable -or
+        -not $report.C_repeatability_ablation.restart_preserved_idempotency) {
         throw 'repeatability result does not match the paper claim'
     }
 }

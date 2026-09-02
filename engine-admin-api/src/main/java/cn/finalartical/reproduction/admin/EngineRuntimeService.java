@@ -49,7 +49,10 @@ final class EngineRuntimeService {
         }
         String idempotencyKey = textValue(payload == null ? null : payload.get("idempotencyKey"), "").trim();
         String retryOfRunId = textValue(payload == null ? null : payload.get("retryOfRunId"), "").trim();
+        String replayOfRunId = textValue(payload == null ? null : payload.get("replayOfRunId"), "").trim();
         int attempt = intValue(payload == null ? null : payload.get("attempt"), 1);
+        String replayState = textValue(payload == null ? null : payload.get("replayFromState"), "").trim();
+        Map<String, Object> replayValues = mapValue(payload == null ? null : payload.get("replayValues"));
         String scope = modelId + "|" + contextId;
         Object ontologyInput = payload == null ? null : payload.get("ontology");
         String requestSha256 = requestSha256(modelId, contextId, event, inputValues, ontologyInput);
@@ -89,6 +92,11 @@ final class EngineRuntimeService {
             context = new RuntimeContextRecord(contextId, modelId, model.getSchemaVersion(), model.getWorkflowVersion(),
                     model.getInitialState(), "CREATED", 0L, startedAtIso);
             context.setValues(defaultValues(currentSchema(model)));
+            if (!replayState.isEmpty()) {
+                context.setState(replayState);
+                context.setStatus(textValue(payload == null ? null : payload.get("replayBeforeStatus"), "CREATED"));
+                context.setValues(replayValues);
+            }
         }
         int beforeSchemaVersion = context.getSchemaVersion();
         int beforeWorkflowVersion = context.getWorkflowVersion();
@@ -147,6 +155,20 @@ final class EngineRuntimeService {
         boolean ontologyRequested = (payload != null && payload.get("ontology") != null)
                 || engine.values().get("subjects") instanceof List;
         String boundOntologyTypeId = model.getOntologyTypeId();
+        OntologyTypeConfig boundOntologyType = boundOntologyTypeId == null ? null : ontologyType(boundOntologyTypeId);
+        int boundOntologyVersion = boundOntologyType == null ? 0 : boundOntologyType.getVersion();
+        String boundOntologyDefinitionSha256 = boundOntologyType == null ? null
+                : OntologyDefinitionHasher.sha256(boundOntologyType);
+        String expectedOntologyVersion = textValue(payload == null ? null : payload.get("expectedOntologyVersion"), "").trim();
+        String expectedOntologyHash = textValue(payload == null ? null : payload.get("expectedOntologyDefinitionSha256"), "").trim();
+        if (!expectedOntologyVersion.isEmpty()
+                && (boundOntologyType == null || boundOntologyVersion != positiveIntValue(expectedOntologyVersion, "expectedOntologyVersion"))) {
+            throw new IllegalArgumentException("ontology definition version changed since the original run");
+        }
+        if (!expectedOntologyHash.isEmpty()
+                && (boundOntologyType == null || !expectedOntologyHash.equals(boundOntologyDefinitionSha256))) {
+            throw new IllegalArgumentException("ontology definition hash changed since the original run");
+        }
         long ontologyStarted = System.nanoTime();
         if (errors.isEmpty()) {
             try {
@@ -177,6 +199,8 @@ final class EngineRuntimeService {
         providerRequest.put("contextId", contextId);
         providerRequest.put("values", engine.values());
         providerRequest.put("ontology", payload == null ? null : payload.get("ontology"));
+        providerRequest.put("ontologyTypeVersion", boundOntologyVersion);
+        providerRequest.put("ontologyDefinitionSha256", boundOntologyDefinitionSha256);
         if (!ontologyRequested) {
             providerError = "ontology input not requested";
         } else if (!errors.isEmpty()) {
@@ -201,6 +225,8 @@ final class EngineRuntimeService {
                 "transport", "IN_PROCESS",
                 "requestJson", json(providerRequest),
                 "responseJson", providerStatus.equals("OK") ? json(ontologyGraph) : "null",
+                "ontologyTypeVersion", String.valueOf(boundOntologyVersion),
+                "ontologyDefinitionSha256", String.valueOf(boundOntologyDefinitionSha256),
                 "objectCount", String.valueOf(objectCount(ontologyGraph)));
         if (provider != null) {
             providerAttributes.put("endpoint", provider.getEndpoint());
@@ -222,6 +248,8 @@ final class EngineRuntimeService {
         run.setId(runId);
         run.setModelId(modelId);
         run.setOntologyTypeId(boundOntologyTypeId);
+        run.setOntologyVersion(boundOntologyVersion);
+        run.setOntologyDefinitionSha256(boundOntologyDefinitionSha256);
         run.setContextId(contextId);
         run.setEngineVersion(state.getEngineVersion());
         run.setSchemaVersion(schemaVersion);
@@ -235,6 +263,7 @@ final class EngineRuntimeService {
         run.setCreatedAt(startedAtIso);
         run.setIdempotencyKey(idempotencyKey.isEmpty() ? null : idempotencyKey);
         run.setRetryOfRunId(retryOfRunId.isEmpty() ? null : retryOfRunId);
+        run.setReplayOfRunId(replayOfRunId.isEmpty() ? null : replayOfRunId);
         run.setAttempt(attempt);
         run.setContextRevision(passed ? context.getRevision() + 1L : context.getRevision());
         run.setContextCommitted(passed);
@@ -242,6 +271,7 @@ final class EngineRuntimeService {
         run.setInputValues(mapValue(inputValues));
         run.setValues(mapValue(afterValues));
         run.setOntologyGraph(ontologyGraph);
+        run.setOntologyInput(copyValue(ontologyInput));
         run.setValidationErrors(errors);
         run.setBeforeSnapshot(snapshot("BEFORE", contextId, modelId, beforeSchemaVersion, beforeWorkflowVersion,
                 fromState, contextStatus(context), startedAtIso, beforeValues));
@@ -275,7 +305,7 @@ final class EngineRuntimeService {
         long persistenceStarted = System.nanoTime();
         addSpan(spans, traceId, "persistence", persistenceStarted, "PREPARED",
                 mapOf("contextCommitted", String.valueOf(passed),
-                        "commitBoundary", "repository.save"));
+                        "commitBoundary", "repository.commit"));
         long responseStarted = System.nanoTime();
         addSpan(spans, traceId, "response", responseStarted, "PREPARED",
                 mapOf("deliveryBoundary", "caller-observation"));
@@ -294,7 +324,49 @@ final class EngineRuntimeService {
             }
             throw exception;
         }
+        try {
+            repository.markPersistenceCommitted(state, runId);
+        } catch (RuntimeException markerFailure) {
+            // The Run is already durable. If the post-commit observation fails,
+            // retain PREPARED rather than claiming a commit that was not observed.
+            try {
+                restoreState(repository.load());
+            } catch (RuntimeException ignored) {
+                // Preserve the durable result and return the marker state below.
+            }
+            RuntimeRun persisted = findRun(runId);
+            if (persisted != null) {
+                return persisted;
+            }
+            throw new IllegalStateException("run committed but trace commit observation failed", markerFailure);
+        }
         return run;
+    }
+
+    synchronized RuntimeRun replay(String runId) {
+        RuntimeRun original = findRun(runId);
+        if (original == null) {
+            throw new IllegalArgumentException("run not found: " + runId);
+        }
+        if (original.getBeforeSnapshot() == null) {
+            throw new IllegalArgumentException("run has no BEFORE snapshot: " + runId);
+        }
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", original.getModelId());
+        payload.put("contextId", "replay-" + UUID.randomUUID().toString().substring(0, 8));
+        payload.put("event", original.getEvent());
+        payload.put("values", mapValue(original.getInputValues()));
+        payload.put("ontology", copyValue(original.getOntologyInput()));
+        payload.put("replayOfRunId", original.getId());
+        payload.put("attempt", 1);
+        payload.put("replayFromState", original.getBeforeSnapshot().getState());
+        payload.put("replayBeforeStatus", original.getBeforeSnapshot().getStatus());
+        payload.put("replayValues", mapValue(original.getBeforeSnapshot().getValues()));
+        if (original.getOntologyVersion() > 0) {
+            payload.put("expectedOntologyVersion", original.getOntologyVersion());
+            payload.put("expectedOntologyDefinitionSha256", original.getOntologyDefinitionSha256());
+        }
+        return execute(payload);
     }
 
     synchronized RuntimeRun retry(String runId) {
@@ -310,8 +382,13 @@ final class EngineRuntimeService {
         payload.put("contextId", original.getContextId());
         payload.put("event", original.getEvent());
         payload.put("values", mapValue(original.getInputValues()));
+        payload.put("ontology", copyValue(original.getOntologyInput()));
         payload.put("retryOfRunId", original.getId());
         payload.put("attempt", original.getAttempt() + 1);
+        if (original.getOntologyVersion() > 0) {
+            payload.put("expectedOntologyVersion", original.getOntologyVersion());
+            payload.put("expectedOntologyDefinitionSha256", original.getOntologyDefinitionSha256());
+        }
         return execute(payload);
     }
 
@@ -361,6 +438,8 @@ final class EngineRuntimeService {
         rollback.setId(rollbackRunId);
         rollback.setModelId(original.getModelId());
         rollback.setOntologyTypeId(original.getOntologyTypeId());
+        rollback.setOntologyVersion(original.getOntologyVersion());
+        rollback.setOntologyDefinitionSha256(original.getOntologyDefinitionSha256());
         rollback.setContextId(original.getContextId());
         rollback.setEngineVersion(state.getEngineVersion());
         rollback.setSchemaVersion(original.getSchemaVersion());
@@ -374,6 +453,7 @@ final class EngineRuntimeService {
         rollback.setCreatedAt(startedAtIso);
         rollback.setIdempotencyKey(null);
         rollback.setRetryOfRunId(null);
+        rollback.setReplayOfRunId(null);
         rollback.setAttempt(1);
         rollback.setContextRevision(context.getRevision() + 1L);
         rollback.setContextCommitted(true);
@@ -381,6 +461,7 @@ final class EngineRuntimeService {
         rollback.setInputValues(Collections.<String, Object>emptyMap());
         rollback.setValues(targetValues);
         rollback.setOntologyGraph(Collections.<String, Object>emptyMap());
+        rollback.setOntologyInput(null);
         rollback.setValidationErrors(Collections.<String>emptyList());
         rollback.setBeforeSnapshot(snapshot("BEFORE", original.getContextId(), original.getModelId(),
                 original.getSchemaVersion(), original.getWorkflowVersion(), beforeState, beforeStatus,
@@ -414,8 +495,9 @@ final class EngineRuntimeService {
         }
 
         long persistenceStarted = System.nanoTime();
-        addSpan(spans, traceId, "persistence", persistenceStarted, "OK",
-                mapOf("contextCommitted", "true", "rollbackOfRunId", runId));
+        addSpan(spans, traceId, "persistence", persistenceStarted, "PREPARED",
+                mapOf("contextCommitted", "true", "rollbackOfRunId", runId,
+                        "commitBoundary", "repository.commit"));
         long responseStarted = System.nanoTime();
         addSpan(spans, traceId, "response", responseStarted, "OK", Collections.<String, String>emptyMap());
         long durationMs = Math.max(1L, (System.nanoTime() - startedAt) / 1000000L);
@@ -432,12 +514,23 @@ final class EngineRuntimeService {
             }
             throw exception;
         }
+        repository.markPersistenceCommitted(state, rollbackRunId);
         return rollback;
     }
 
     private void restoreState(String stateJson) {
         try {
             EngineState restored = mapper.readValue(stateJson, EngineState.class);
+            restoreState(restored);
+        } catch (IOException exception) {
+            throw new IllegalStateException("cannot restore failed runtime transaction", exception);
+        }
+    }
+
+    private void restoreState(EngineState restored) {
+        if (restored == null) {
+            throw new IllegalArgumentException("restored engine state must not be null");
+        }
             state.setEngineId(restored.getEngineId());
             state.setEngineName(restored.getEngineName());
             state.setEngineVersion(restored.getEngineVersion());
@@ -450,9 +543,6 @@ final class EngineRuntimeService {
             state.setContexts(restored.getContexts());
             state.setAuditEvents(restored.getAuditEvents());
             state.setIdempotencyRecords(restored.getIdempotencyRecords());
-        } catch (IOException exception) {
-            throw new IllegalStateException("cannot restore failed runtime transaction", exception);
-        }
     }
 
     private Map<String, Object> invokeOntologyProvider(ServiceRegistration provider, String modelId,
@@ -601,7 +691,7 @@ final class EngineRuntimeService {
         try {
             executionStatus = ExecutionStatus.valueOf(status);
         } catch (IllegalArgumentException exception) {
-            executionStatus = ExecutionStatus.CREATED;
+            throw new IllegalArgumentException("snapshot status is invalid: " + status, exception);
         }
         ExecutionSnapshot snapshot = new ExecutionSnapshot(contextId, modelId, schemaVersion, workflowVersion,
                 state, executionStatus, capturedAt, values);
@@ -674,6 +764,15 @@ final class EngineRuntimeService {
                     type.getDynamicAttributes(), relations));
         }
         return definitions;
+    }
+
+    private OntologyTypeConfig ontologyType(String typeId) {
+        for (OntologyTypeConfig type : state.getOntologyTypes()) {
+            if (typeId.equals(type.getId())) {
+                return type;
+            }
+        }
+        throw new IllegalStateException("ontology type not found: " + typeId);
     }
 
     private int objectCount(Map<String, Object> graph) {
@@ -764,6 +863,18 @@ final class EngineRuntimeService {
             return result;
         } catch (NumberFormatException exception) {
             throw new IllegalArgumentException("attempt must be an integer");
+        }
+    }
+
+    private static int positiveIntValue(String value, String field) {
+        try {
+            int result = Integer.parseInt(value);
+            if (result < 1) {
+                throw new IllegalArgumentException(field + " must be positive");
+            }
+            return result;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(field + " must be an integer");
         }
     }
 

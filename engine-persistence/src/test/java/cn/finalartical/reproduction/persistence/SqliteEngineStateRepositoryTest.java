@@ -52,7 +52,7 @@ public class SqliteEngineStateRepositoryTest {
                      "SELECT (SELECT max(version) FROM schema_version), (SELECT count(*) FROM engine_model), " +
                              "(SELECT count(*) FROM schema_field WHERE field_name = 'confidence')")) {
             assertTrue(result.next());
-            assertEquals(11, result.getInt(1));
+            assertEquals(12, result.getInt(1));
             assertEquals(2, result.getInt(2));
             assertTrue(result.getInt(3) >= 1);
         }
@@ -349,7 +349,7 @@ public class SqliteEngineStateRepositoryTest {
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT max(version) FROM schema_version), input_values_json, attempt, retry_of_run_id FROM runtime_run WHERE run_id = '" + written.getId() + "'")) {
             assertTrue(result.next());
-            assertEquals(11, result.getInt(1));
+            assertEquals(12, result.getInt(1));
             assertTrue(result.getString(2).contains("重启恢复"));
             assertEquals(1, result.getInt(3));
             assertEquals(null, result.getString(4));
@@ -367,6 +367,41 @@ public class SqliteEngineStateRepositoryTest {
             assertTrue(result.getInt(4) >= 2);
             assertTrue(result.getInt(5) >= 2);
             assertTrue(result.getInt(6) >= 2);
+        }
+    }
+
+    @Test
+    public void rejectsLegacyLifecycleForCurrentEvidenceAndAuditsPostCommitPayload() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-evidence-boundary");
+        Path database = directory.resolve("engine.db");
+        EngineAdminService service = new EngineAdminService(new SqliteEngineStateRepository(database));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "interview-session");
+        payload.put("contextId", "ctx-evidence-boundary");
+        payload.put("event", "startInterview");
+        RuntimeRun run = service.execute(payload);
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             ResultSet result = connection.createStatement().executeQuery(
+                     "SELECT (SELECT payload_sha256 FROM engine_state WHERE state_id = 1), " +
+                             "(SELECT payload_sha256 FROM state_write ORDER BY write_id DESC LIMIT 1)")) {
+            assertTrue(result.next());
+            assertEquals(result.getString(1), result.getString(2));
+        }
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement update = connection.prepareStatement(
+                     "UPDATE trace SET lifecycle = ? WHERE run_id = ?")) {
+            update.setString(1, "LEGACY_UNKNOWN");
+            update.setString(2, run.getId());
+            assertEquals(1, update.executeUpdate());
+        }
+
+        try {
+            new EngineAdminService(new SqliteEngineStateRepository(database));
+            fail("current evidence must not accept legacy trace lifecycle");
+        } catch (IllegalStateException exception) {
+            assertTrue(hasMessage(exception, "trace identity or lifecycle is invalid"));
         }
     }
 
@@ -458,6 +493,71 @@ public class SqliteEngineStateRepositoryTest {
 
         assertEquals(EngineAdminService.LEGACY_RUNTIME_IDENTITY, reloaded.run(written.getId()).getDataIdentity());
         assertEquals(null, reloaded.run(written.getId()).getTrace());
+    }
+
+    @Test
+    public void rejectsTamperedSnapshotHashOnServiceStartup() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-tampered-snapshot");
+        Path database = directory.resolve("engine.db");
+        EngineAdminService service = new EngineAdminService(new SqliteEngineStateRepository(database));
+        RuntimeRun written = service.execute(new LinkedHashMap<String, Object>() {{
+            put("modelId", "interview-session"); put("contextId", "ctx-tampered-snapshot");
+            put("event", "startInterview"); put("values", new LinkedHashMap<String, Object>() {{
+                put("candidateName", "坏快照");
+            }});
+        }});
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement update = connection.prepareStatement(
+                     "UPDATE execution_snapshot SET sha256 = 'tampered' WHERE run_id = ? AND phase = 'BEFORE'")) {
+            update.setString(1, written.getId());
+            update.executeUpdate();
+        }
+
+        try {
+            new EngineAdminService(new SqliteEngineStateRepository(database));
+            fail("tampered snapshot must be rejected");
+        } catch (IllegalStateException expected) {
+            assertTrue(hasMessage(expected, "snapshot sha256 mismatch"));
+        }
+    }
+
+    @Test
+    public void rejectsInvalidTraceLifecycleOnRepositoryLoad() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-tampered-trace");
+        Path database = directory.resolve("engine.db");
+        EngineAdminService service = new EngineAdminService(new SqliteEngineStateRepository(database));
+        RuntimeRun written = service.execute(new LinkedHashMap<String, Object>() {{
+            put("modelId", "interview-session"); put("contextId", "ctx-tampered-trace");
+            put("event", "startInterview"); put("values", new LinkedHashMap<String, Object>() {{
+                put("candidateName", "坏Trace");
+            }});
+        }});
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement update = connection.prepareStatement(
+                     "UPDATE trace SET lifecycle = 'BOGUS' WHERE run_id = ?")) {
+            update.setString(1, written.getId());
+            update.executeUpdate();
+        }
+
+        try {
+            new SqliteEngineStateRepository(database).load();
+            fail("invalid trace lifecycle must be rejected");
+        } catch (IllegalStateException expected) {
+            assertTrue(hasMessage(expected, "trace lifecycle is invalid"));
+        }
+    }
+
+    private static boolean hasMessage(Throwable failure, String expected) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current.getMessage() != null && current.getMessage().contains(expected)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private static cn.finalartical.reproduction.admin.EngineModel findModel(EngineState state, String modelId) {

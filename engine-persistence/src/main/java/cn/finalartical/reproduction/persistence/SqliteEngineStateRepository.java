@@ -33,22 +33,37 @@ import java.util.List;
 import java.util.Map;
 
 public final class SqliteEngineStateRepository implements EngineStateRepository {
-    private static final int SCHEMA_VERSION = 11;
+    private static final int SCHEMA_VERSION = 12;
 
     private final Path databasePath;
     private final Path legacyJsonPath;
+    private final FailureInjector failureInjector;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public SqliteEngineStateRepository(Path databasePath) {
-        this(databasePath, null);
+        this(databasePath, null, null);
     }
 
     public SqliteEngineStateRepository(Path databasePath, Path legacyJsonPath) {
+        this(databasePath, legacyJsonPath, null);
+    }
+
+    public SqliteEngineStateRepository(Path databasePath, Path legacyJsonPath, FailureInjector failureInjector) {
         if (databasePath == null) {
             throw new IllegalArgumentException("database path must not be null");
         }
         this.databasePath = databasePath;
         this.legacyJsonPath = legacyJsonPath;
+        this.failureInjector = failureInjector == null ? new FailureInjector() {
+            @Override
+            public void after(String step) {
+                // no-op in production
+            }
+        } : failureInjector;
+    }
+
+    public interface FailureInjector {
+        void after(String step);
     }
 
     @Override
@@ -61,6 +76,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 write(connection, seed, 0L);
                 return seed;
             }
+            validatePayloadHash(connection, payload);
             EngineState state = mapper.readValue(payload, EngineState.class);
             state.setRevision(currentRevision(connection));
             connection.setAutoCommit(false);
@@ -108,6 +124,59 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             write(connection, state, expectedRevision);
         } catch (SQLException exception) {
             throw new IllegalStateException("cannot save SQLite engine state: " + databasePath, exception);
+        }
+    }
+
+    @Override
+    public synchronized void markPersistenceCommitted(EngineState state, String runId) {
+        if (state == null || runId == null || runId.trim().isEmpty()) {
+            throw new IllegalArgumentException("state and run id must be valid");
+        }
+        try (Connection connection = open()) {
+            migrate(connection);
+            try {
+                try (Statement begin = connection.createStatement()) {
+                    begin.execute("BEGIN IMMEDIATE");
+                }
+                long actualRevision = currentRevision(connection);
+                if (actualRevision != state.getRevision()) {
+                    throw new ConcurrentModificationException("engine state revision conflict while marking trace: expected "
+                            + state.getRevision() + " but was " + actualRevision);
+                }
+                TraceLifecycle.markPersistenceCommitted(state, runId);
+                String payload;
+                try {
+                    payload = mapper.writeValueAsString(state);
+                } catch (IOException exception) {
+                    throw new IllegalStateException("cannot encode committed trace observation", exception);
+                }
+                try (PreparedStatement update = connection.prepareStatement(
+                        "UPDATE engine_state SET payload_json = ?, payload_sha256 = ?, updated_at = ? WHERE state_id = 1")) {
+                    update.setString(1, payload);
+                    update.setString(2, sha256(payload));
+                    update.setString(3, state.getUpdatedAt() == null ? Instant.now().toString() : state.getUpdatedAt());
+                    update.executeUpdate();
+                }
+                try (PreparedStatement audit = connection.prepareStatement(
+                        "INSERT INTO state_write(revision, payload_sha256, written_at) VALUES (?, ?, ?)")) {
+                    audit.setLong(1, state.getRevision());
+                    audit.setString(2, sha256(payload));
+                    audit.setString(3, Instant.now().toString());
+                    audit.executeUpdate();
+                }
+                synchronizeRuntimeProjection(connection, state);
+                try (Statement commit = connection.createStatement()) {
+                    commit.execute("COMMIT");
+                }
+            } catch (SQLException exception) {
+                rollbackQuietly(connection, exception);
+                throw exception;
+            } catch (RuntimeException exception) {
+                rollbackQuietly(connection, exception);
+                throw exception;
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("cannot mark SQLite trace commit observation: " + databasePath, exception);
         }
     }
 
@@ -194,6 +263,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         }
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath.toAbsolutePath());
         connection.createStatement().execute("PRAGMA foreign_keys = ON");
+        connection.createStatement().execute("PRAGMA busy_timeout = 5000");
         return connection;
     }
 
@@ -321,6 +391,17 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                     insert.executeUpdate();
                 }
             }
+            if (!hasVersion(connection, 12)) {
+                for (String sql : readMigration("/schema/012_runtime_evidence_identity.sql")) {
+                    if (!sql.trim().isEmpty()) statement.execute(sql);
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
+                    insert.setInt(1, 12);
+                    insert.setString(2, Instant.now().toString());
+                    insert.executeUpdate();
+                }
+            }
         }
     }
 
@@ -371,7 +452,6 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             }
             long revision = expectedRevision + 1L;
             state.setRevision(revision);
-            TraceLifecycle.markPersistenceCommitted(state);
             String payload;
             try {
                 payload = mapper.writeValueAsString(state);
@@ -405,7 +485,9 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 audit.executeUpdate();
             }
             synchronizeConfigurationProjection(connection, state);
+            failureInjector.after("configuration_projection");
             synchronizeRuntimeProjection(connection, state);
+            failureInjector.after("runtime_projection");
             try (Statement commit = connection.createStatement()) {
                 commit.execute("COMMIT");
             }
@@ -431,6 +513,17 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 "SELECT revision FROM engine_state WHERE state_id = 1")) {
             try (ResultSet result = query.executeQuery()) {
                 return result.next() ? result.getLong(1) : 0L;
+            }
+        }
+    }
+
+    private void validatePayloadHash(Connection connection, String payload) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT payload_sha256 FROM engine_state WHERE state_id = 1")) {
+            try (ResultSet result = query.executeQuery()) {
+                if (!result.next() || !sha256(payload).equals(result.getString(1))) {
+                    throw new SQLException("engine_state payload sha256 mismatch");
+                }
             }
         }
     }
@@ -464,10 +557,10 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         }
 
         try (PreparedStatement insert = connection.prepareStatement(
-                "INSERT INTO runtime_run(run_id, model_id, ontology_type_id, context_id, engine_version, schema_version, workflow_version, status, data_identity, event, from_state, to_state, trace_id, idempotency_key, context_revision, context_committed, error_code, created_at, duration_ms, values_json, validation_errors_json, ontology_graph_json, input_values_json, retry_of_run_id, attempt) VALUES (" +
-                        "?, ?, ?, ?, ?, ?, ?, ?, ?, " +
+                "INSERT INTO runtime_run(run_id, model_id, ontology_type_id, ontology_version, ontology_definition_sha256, ontology_input_json, replay_of_run_id, context_id, engine_version, schema_version, workflow_version, status, data_identity, event, from_state, to_state, trace_id, idempotency_key, context_revision, context_committed, error_code, created_at, duration_ms, values_json, validation_errors_json, ontology_graph_json, input_values_json, retry_of_run_id, attempt) VALUES (" +
+                        "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " +
                         "?, ?, ?, ?, ?, ?, ?, ?, " +
-                        "?, ?, ?, ?, ?, ?, ?, ?)")) {
+                        "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
             for (cn.finalartical.reproduction.admin.RuntimeRun run : state.getRuns()) {
                 if (run.getId() == null || run.getModelId() == null || run.getContextId() == null
                         || run.getStatus() == null || run.getDataIdentity() == null || run.getEvent() == null
@@ -481,28 +574,32 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 insert.setString(1, run.getId());
                 insert.setString(2, run.getModelId());
                 insert.setString(3, run.getOntologyTypeId());
-                insert.setString(4, run.getContextId());
-                insert.setString(5, run.getEngineVersion() == null ? "" : run.getEngineVersion());
-                insert.setInt(6, run.getSchemaVersion());
-                insert.setInt(7, run.getWorkflowVersion());
-                insert.setString(8, run.getStatus());
-                insert.setString(9, run.getDataIdentity());
-                insert.setString(10, run.getEvent());
-                insert.setString(11, run.getFromState());
-                insert.setString(12, run.getToState());
-                insert.setString(13, run.getTraceId());
-                insert.setString(14, run.getIdempotencyKey());
-                insert.setLong(15, run.getContextRevision());
-                insert.setInt(16, run.isContextCommitted() ? 1 : 0);
-                insert.setString(17, run.getErrorCode());
-                insert.setString(18, run.getCreatedAt());
-                insert.setLong(19, run.getDurationMs());
-                insert.setString(20, json(run.getValues()));
-                insert.setString(21, json(run.getValidationErrors()));
-                insert.setString(22, json(run.getOntologyGraph()));
-                insert.setString(23, json(run.getInputValues()));
-                insert.setString(24, run.getRetryOfRunId());
-                insert.setInt(25, run.getAttempt());
+                insert.setInt(4, run.getOntologyVersion());
+                insert.setString(5, run.getOntologyDefinitionSha256());
+                insert.setString(6, json(run.getOntologyInput()));
+                insert.setString(7, run.getReplayOfRunId());
+                insert.setString(8, run.getContextId());
+                insert.setString(9, run.getEngineVersion() == null ? "" : run.getEngineVersion());
+                insert.setInt(10, run.getSchemaVersion());
+                insert.setInt(11, run.getWorkflowVersion());
+                insert.setString(12, run.getStatus());
+                insert.setString(13, run.getDataIdentity());
+                insert.setString(14, run.getEvent());
+                insert.setString(15, run.getFromState());
+                insert.setString(16, run.getToState());
+                insert.setString(17, run.getTraceId());
+                insert.setString(18, run.getIdempotencyKey());
+                insert.setLong(19, run.getContextRevision());
+                insert.setInt(20, run.isContextCommitted() ? 1 : 0);
+                insert.setString(21, run.getErrorCode());
+                insert.setString(22, run.getCreatedAt());
+                insert.setLong(23, run.getDurationMs());
+                insert.setString(24, json(run.getValues()));
+                insert.setString(25, json(run.getValidationErrors()));
+                insert.setString(26, json(run.getOntologyGraph()));
+                insert.setString(27, json(run.getInputValues()));
+                insert.setString(28, run.getRetryOfRunId());
+                insert.setInt(29, run.getAttempt());
                 insert.addBatch();
             }
             insert.executeBatch();
@@ -715,14 +812,14 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 typeInsert.setString(1, type.getId());
                 typeInsert.setString(2, type.getLabel());
                 typeInsert.setString(3, type.getDescription());
-                typeInsert.setInt(4, 1);
+                typeInsert.setInt(4, type.getVersion());
                 typeInsert.setString(5, projectionTime);
                 typeInsert.addBatch();
                 for (String attribute : type.getFixedAttributes()) {
                     attributeInsert.setString(1, type.getId());
                     attributeInsert.setString(2, attribute);
                     attributeInsert.setString(3, "FIXED");
-                    attributeInsert.setInt(4, 1);
+                    attributeInsert.setInt(4, type.getVersion());
                     attributeInsert.setString(5, projectionTime);
                     attributeInsert.addBatch();
                 }
@@ -730,7 +827,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                     attributeInsert.setString(1, type.getId());
                     attributeInsert.setString(2, attribute);
                     attributeInsert.setString(3, "DYNAMIC");
-                    attributeInsert.setInt(4, 1);
+                    attributeInsert.setInt(4, type.getVersion());
                     attributeInsert.setString(5, projectionTime);
                     attributeInsert.addBatch();
                 }
@@ -739,7 +836,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                     relationInsert.setString(2, relation.getName());
                     relationInsert.setString(3, relation.getTargetType());
                     relationInsert.setString(4, relation.getCardinality());
-                    relationInsert.setInt(5, 1);
+                    relationInsert.setInt(5, type.getVersion());
                     relationInsert.setString(6, projectionTime);
                     relationInsert.addBatch();
                 }
@@ -918,12 +1015,14 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         Map<String, cn.finalartical.reproduction.admin.OntologyTypeConfig> ontologyTypes =
                 new LinkedHashMap<String, cn.finalartical.reproduction.admin.OntologyTypeConfig>();
         try (PreparedStatement query = connection.prepareStatement(
-                "SELECT ontology_type_id, label, description FROM ontology_type ORDER BY ontology_type_id")) {
+                "SELECT ontology_type_id, label, description, type_version FROM ontology_type ORDER BY ontology_type_id")) {
             try (ResultSet result = query.executeQuery()) {
                 while (result.next()) {
-                    ontologyTypes.put(result.getString("ontology_type_id"),
+                    cn.finalartical.reproduction.admin.OntologyTypeConfig type =
                             new cn.finalartical.reproduction.admin.OntologyTypeConfig(result.getString("ontology_type_id"),
-                                    result.getString("label"), result.getString("description")));
+                                    result.getString("label"), result.getString("description"));
+                    type.setVersion(result.getInt("type_version"));
+                    ontologyTypes.put(result.getString("ontology_type_id"), type);
                 }
             }
         }
@@ -1031,6 +1130,11 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                             + "OR lower(target.label) = lower(r.target_type) "
                             + "WHERE target.ontology_type_id IS NULL",
                     "ontology_relation points to a missing target ontology type");
+            assertNoRows(connection,
+                    "SELECT m.model_id FROM engine_model m "
+                            + "LEFT JOIN ontology_type t ON t.ontology_type_id = m.ontology_type_id "
+                            + "WHERE m.ontology_type_id IS NOT NULL AND t.ontology_type_id IS NULL",
+                    "engine_model points to a missing ontology binding");
         }
         if (hasConfigurationProjection && rowCount(connection, "runtime_context") > 0) {
             assertNoRows(connection,
@@ -1082,6 +1186,9 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                         + "LEFT JOIN trace t ON t.trace_id = s.trace_id "
                         + "WHERE t.trace_id IS NULL OR s.duration_ms < 0 OR s.span_index < 0",
                 "trace_span is detached or has a negative duration");
+        assertNoRows(connection,
+                "SELECT trace_id FROM trace WHERE lifecycle NOT IN ('PREPARED', 'COMMITTED', 'LEGACY_UNKNOWN')",
+                "trace lifecycle is invalid");
         assertNoRows(connection,
                 "SELECT i.scope || ':' || i.idempotency_key FROM idempotency_record i "
                         + "LEFT JOIN runtime_run r ON r.run_id = i.run_id "
@@ -1135,7 +1242,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         Map<String, cn.finalartical.reproduction.admin.RuntimeRun> runs = new LinkedHashMap<String, cn.finalartical.reproduction.admin.RuntimeRun>();
         if (rowCount(connection, "runtime_run") > 0) {
             try (PreparedStatement query = connection.prepareStatement(
-                    "SELECT run_id, model_id, ontology_type_id, context_id, engine_version, schema_version, workflow_version, status, "
+                    "SELECT run_id, model_id, ontology_type_id, ontology_version, ontology_definition_sha256, ontology_input_json, replay_of_run_id, context_id, engine_version, schema_version, workflow_version, status, "
                             + "data_identity, event, from_state, to_state, trace_id, idempotency_key, context_revision, "
                             + "context_committed, error_code, created_at, duration_ms, values_json, validation_errors_json, "
                             + "ontology_graph_json, input_values_json, retry_of_run_id, attempt FROM runtime_run ORDER BY created_at DESC")) {
@@ -1145,6 +1252,10 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                         run.setId(result.getString("run_id"));
                         run.setModelId(result.getString("model_id"));
                         run.setOntologyTypeId(result.getString("ontology_type_id"));
+                        run.setOntologyVersion(result.getInt("ontology_version"));
+                        run.setOntologyDefinitionSha256(result.getString("ontology_definition_sha256"));
+                        run.setOntologyInput(readJsonValue(result.getString("ontology_input_json")));
+                        run.setReplayOfRunId(result.getString("replay_of_run_id"));
                         run.setContextId(result.getString("context_id"));
                         run.setEngineVersion(result.getString("engine_version"));
                         run.setSchemaVersion(result.getInt("schema_version"));

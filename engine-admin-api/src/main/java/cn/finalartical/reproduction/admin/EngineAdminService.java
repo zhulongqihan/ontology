@@ -48,6 +48,7 @@ public final class EngineAdminService {
         changed = normalizeLegacyRuns() || changed;
         validateModelContracts();
         validateAuditContracts();
+        EvidenceIntegrity.validateState(state);
         if (changed) {
             touch(state);
             save();
@@ -113,12 +114,24 @@ public final class EngineAdminService {
                     || LEGACY_RUNTIME_IDENTITY.equals(run.getDataIdentity())) {
                 continue;
             }
+            if (isBlank(run.getDataIdentity())) {
+                run.setDataIdentity(LEGACY_RUNTIME_IDENTITY);
+                changed = true;
+            }
             if (isLegacyRuntimeRun(run)) {
                 run.setDataIdentity(LEGACY_RUNTIME_IDENTITY);
                 changed = true;
             }
             if (run.getTrace() != null && isBlank(run.getTrace().getLifecycle())) {
                 run.getTrace().setLifecycle("LEGACY_UNKNOWN");
+                changed = true;
+            }
+            if (EngineAdminService.DATA_IDENTITY.equals(run.getDataIdentity())
+                    && run.getOntologyTypeId() != null
+                    && (run.getOntologyVersion() < 1 || isBlank(run.getOntologyDefinitionSha256()))) {
+                // The old format recorded only the type id. The exact definition
+                // used at execution time cannot be reconstructed safely.
+                run.setDataIdentity(LEGACY_RUNTIME_IDENTITY);
                 changed = true;
             }
         }
@@ -419,6 +432,7 @@ public final class EngineAdminService {
         }
         OntologyRelationConfig relation = new OntologyRelationConfig(name, targetType, cardinality);
         type.getRelations().add(relation);
+        type.setVersion(type.getVersion() + 1);
         appendAudit("ONTOLOGY_RELATION_REGISTERED", "OntologyRelation", typeId + ":" + name,
                 "target=" + targetType + ", cardinality=" + cardinality, changes(
                         change(relationPath(typeId, name) + ".targetType", null, targetType),
@@ -459,6 +473,7 @@ public final class EngineAdminService {
         }
         relation.setTargetType(targetType);
         relation.setCardinality(cardinality);
+        type.setVersion(type.getVersion() + 1);
         appendAudit("ONTOLOGY_RELATION_UPDATED", "OntologyRelation", type.getId() + ":" + relationName,
                 "target=" + targetType + ", cardinality=" + cardinality, auditChanges);
         touch(state);
@@ -552,6 +567,10 @@ public final class EngineAdminService {
 
     public synchronized RuntimeRun retry(String runId) {
         return copy(runtimeService.retry(runId), RuntimeRun.class);
+    }
+
+    public synchronized RuntimeRun replay(String runId) {
+        return copy(runtimeService.replay(runId), RuntimeRun.class);
     }
 
     public synchronized RuntimeRun rollback(String runId) {
@@ -840,17 +859,24 @@ public final class EngineAdminService {
     private boolean normalizeOntologyTypes() {
         boolean changed = false;
         for (OntologyTypeConfig type : state.getOntologyTypes()) {
+            boolean typeChanged = false;
             if ("questionnaire".equals(type.getId()) && !type.getDynamicAttributes().contains("subjects")) {
                 type.getDynamicAttributes().add(0, "subjects");
                 changed = true;
+                typeChanged = true;
             }
             if ("subject".equals(type.getId()) && !type.getDynamicAttributes().contains("optionCount")) {
                 type.getDynamicAttributes().add("optionCount");
                 changed = true;
+                typeChanged = true;
             }
             if ("option".equals(type.getId()) && !type.getFixedAttributes().contains("label")) {
                 type.getFixedAttributes().add("label");
                 changed = true;
+                typeChanged = true;
+            }
+            if (typeChanged) {
+                type.setVersion(type.getVersion() + 1);
             }
         }
         return changed;
