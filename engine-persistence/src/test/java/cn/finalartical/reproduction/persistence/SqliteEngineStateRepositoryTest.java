@@ -17,6 +17,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 import static org.junit.Assert.assertTrue;
 
 public class SqliteEngineStateRepositoryTest {
@@ -74,6 +75,53 @@ public class SqliteEngineStateRepositoryTest {
         EngineState reloaded = repository.load();
 
         assertEquals("从规范化表读取", findModel(reloaded, "interview-session").getName());
+    }
+
+    @Test
+    public void rejectsBrokenNormalizedProjectionBeforeRewritingCompatibilityPayload() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-projection-integrity");
+        Path database = directory.resolve("engine.db");
+        SqliteEngineStateRepository repository = new SqliteEngineStateRepository(database);
+        repository.load();
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement update = connection.prepareStatement(
+                     "UPDATE engine_model SET schema_version = ? WHERE model_id = ?")) {
+            update.setInt(1, 999);
+            update.setString(2, "interview-session");
+            update.executeUpdate();
+        }
+
+        try {
+            repository.load();
+            fail("broken normalized projection must not be silently rewritten");
+        } catch (IllegalStateException exception) {
+            assertTrue(exception.getCause().getMessage().contains("missing current schema definition"));
+        }
+    }
+
+    @Test
+    public void preservesRuntimeHistoryWhileRebuildingMissingConfigurationProjection() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-legacy-runtime");
+        Path database = directory.resolve("engine.db");
+        SqliteEngineStateRepository repository = new SqliteEngineStateRepository(database);
+        EngineAdminService service = new EngineAdminService(repository);
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "interview-session");
+        payload.put("contextId", "ctx-legacy-projection");
+        payload.put("event", "startInterview");
+        RuntimeRun written = service.execute(payload);
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath())) {
+            connection.createStatement().execute("PRAGMA foreign_keys = ON");
+            connection.createStatement().executeUpdate("DELETE FROM engine_model");
+        }
+
+        EngineState recovered = repository.load();
+
+        assertEquals(2, recovered.getModels().size());
+        assertEquals(written.getId(), new EngineAdminService(new SqliteEngineStateRepository(database))
+                .run(written.getId()).getId());
     }
 
     @Test

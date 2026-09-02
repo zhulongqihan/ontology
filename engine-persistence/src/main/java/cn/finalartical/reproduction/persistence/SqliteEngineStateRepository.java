@@ -61,6 +61,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             state.setRevision(currentRevision(connection));
             connection.setAutoCommit(false);
             try {
+                validateNormalizedProjection(connection);
                 loadConfigurationProjection(connection, state);
                 loadRuntimeProjection(connection, state);
                 synchronizeConfigurationProjection(connection, state);
@@ -778,6 +779,87 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         try (PreparedStatement query = connection.prepareStatement("SELECT count(*) FROM engine_model")) {
             try (ResultSet result = query.executeQuery()) {
                 return result.next() && result.getInt(1) > 0;
+            }
+        }
+    }
+
+    private void validateNormalizedProjection(Connection connection) throws SQLException {
+        boolean hasConfigurationProjection = rowCount(connection, "engine_model") > 0;
+        if (hasConfigurationProjection) {
+            assertNoRows(connection,
+                    "SELECT m.model_id FROM engine_model m "
+                            + "LEFT JOIN schema_definition s ON s.model_id = m.model_id AND s.schema_version = m.schema_version "
+                            + "WHERE s.model_id IS NULL",
+                    "engine_model points to a missing current schema definition");
+            assertNoRows(connection,
+                    "SELECT m.model_id FROM engine_model m "
+                            + "LEFT JOIN workflow_definition w ON w.model_id = m.model_id AND w.workflow_version = m.workflow_version "
+                            + "WHERE w.model_id IS NULL",
+                    "engine_model points to a missing current workflow definition");
+            assertNoRows(connection,
+                "SELECT r.ontology_type_id || ':' || r.relation_name FROM ontology_relation r "
+                            + "LEFT JOIN ontology_type target ON target.ontology_type_id = r.target_type "
+                            + "OR lower(target.label) = lower(r.target_type) "
+                            + "WHERE target.ontology_type_id IS NULL",
+                    "ontology_relation points to a missing target ontology type");
+        }
+        if (hasConfigurationProjection && rowCount(connection, "runtime_context") > 0) {
+            assertNoRows(connection,
+                    "SELECT c.context_id FROM runtime_context c "
+                            + "LEFT JOIN engine_model m ON m.model_id = c.model_id "
+                            + "WHERE m.model_id IS NULL",
+                    "runtime_context points to a missing engine model");
+        }
+        if (hasConfigurationProjection && rowCount(connection, "runtime_run") > 0) {
+            assertNoRows(connection,
+                    "SELECT r.run_id FROM runtime_run r "
+                            + "LEFT JOIN engine_model m ON m.model_id = r.model_id "
+                            + "WHERE m.model_id IS NULL",
+                    "runtime_run points to a missing engine model");
+            assertNoRows(connection,
+                    "SELECT r.run_id FROM runtime_run r "
+                            + "LEFT JOIN runtime_context c ON c.context_id = r.context_id "
+                            + "WHERE c.context_id IS NULL",
+                    "runtime_run points to a missing runtime context");
+            assertNoRows(connection,
+                    "SELECT r.run_id FROM runtime_run r "
+                            + "JOIN runtime_context c ON c.context_id = r.context_id "
+                            + "WHERE c.model_id <> r.model_id",
+                    "runtime_run model does not match its runtime context");
+        }
+        assertNoRows(connection,
+                "SELECT snapshot_id FROM execution_snapshot s "
+                        + "LEFT JOIN runtime_run r ON r.run_id = s.run_id "
+                        + "WHERE r.run_id IS NULL",
+                "execution_snapshot points to a missing runtime run");
+        assertNoRows(connection,
+                "SELECT t.trace_id FROM trace t "
+                        + "LEFT JOIN runtime_run r ON r.run_id = t.run_id "
+                        + "WHERE r.run_id IS NULL",
+                "trace points to a missing runtime run");
+        assertNoRows(connection,
+                "SELECT s.span_id FROM trace_span s "
+                        + "LEFT JOIN trace t ON t.trace_id = s.trace_id "
+                        + "WHERE t.trace_id IS NULL",
+                "trace_span points to a missing trace");
+        assertNoRows(connection,
+                "SELECT i.scope || ':' || i.idempotency_key FROM idempotency_record i "
+                        + "LEFT JOIN runtime_run r ON r.run_id = i.run_id "
+                        + "WHERE r.run_id IS NULL",
+                "idempotency_record points to a missing runtime run");
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("PRAGMA foreign_key_check")) {
+            if (result.next()) {
+                throw new SQLException("SQLite normalized projection foreign key check failed: "
+                        + result.getString(1) + ":" + result.getString(2));
+            }
+        }
+    }
+
+    private void assertNoRows(Connection connection, String sql, String message) throws SQLException {
+        try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery(sql)) {
+            if (result.next()) {
+                throw new SQLException(message + ": " + result.getString(1));
             }
         }
     }
