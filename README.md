@@ -129,6 +129,8 @@ npm.cmd run dev
 | `GET/POST` | `/api/models` | 查询或注册柔性对象模型 |
 | `GET` | `/api/models/{id}` | 查询模型、Schema 和工作流 |
 | `POST` | `/api/models/{id}/fields` | 写入动态字段并递增 Schema 版本 |
+| `POST` | `/api/models/{id}/fields/rename` | 改名并发布带显式迁移规则的新 Schema 版本 |
+| `POST` | `/api/models/{id}/fields/remove` | 删除字段并发布新 Schema 版本 |
 | `POST` | `/api/models/{id}/transitions` | 写入事件状态转换 |
 | `GET/POST` | `/api/ontology/types` | 查询或注册本体类型 |
 | `POST` | `/api/ontology/types/{id}/relations` | 注册对象关系 |
@@ -173,7 +175,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：48/48 通过。
+- Maven 多模块测试：52/52 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
@@ -195,7 +197,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 当前版本是论文级柔性引擎与本体化平台的可运行基础，但仍不是完整生产级实现。已完成运行域证据闭环的第一切片，仍需继续完善的工程能力包括：
 
 - SQLite 已建立配置域和运行域规范化表及事务投影；配置和运行事实读取已优先从规范化表重建，状态 JSON 仅保留为旧库兼容备份，加载前投影完整性校验已加入，配置表级并发审计仍待继续。
-- 字段改名/删除的显式迁移规则、Schema 版本回滚和更细粒度的兼容策略。
+- 跨类型转换、Schema 版本回滚和更细粒度的兼容策略。
 - 故障注入、更细粒度的并发冲突恢复和重试策略配置。
 - 请求—响应—Provider 的真实多服务调用链和更多 Trace 语义。
 - 本体关系装配的更多跨类型、跨服务和兼容场景。

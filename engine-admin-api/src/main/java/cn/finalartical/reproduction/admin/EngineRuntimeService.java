@@ -413,15 +413,43 @@ final class EngineRuntimeService {
         if (fromVersion == model.getSchemaVersion()) {
             return new LinkedHashMap<String, Object>(source);
         }
-        Map<String, Object> migrated = new LinkedHashMap<String, Object>();
-        for (EngineField field : currentSchema(model).getFields()) {
-            if (source.containsKey(field.getName())) {
-                migrated.put(field.getName(), source.get(field.getName()));
-            } else if (field.getDefaultValue() != null) {
-                migrated.put(field.getName(), field.getDefaultValue());
+        Map<String, Object> migrated = new LinkedHashMap<String, Object>(source);
+        for (int version = fromVersion + 1; version <= model.getSchemaVersion(); version++) {
+            SchemaVersionRecord targetSchema = schemaVersion(model, version);
+            Map<String, Object> next = new LinkedHashMap<String, Object>();
+            for (EngineField field : targetSchema.getFields()) {
+                if (migrated.containsKey(field.getName())) {
+                    next.put(field.getName(), migrated.get(field.getName()));
+                    continue;
+                }
+                boolean renamed = false;
+                for (SchemaMigrationRecord rule : model.getSchemaMigrations()) {
+                    if (rule.getToVersion() == version && field.getName().equals(rule.getTargetField())
+                            && migrated.containsKey(rule.getSourceField())) {
+                        next.put(field.getName(), migrated.get(rule.getSourceField()));
+                        renamed = true;
+                        break;
+                    }
+                }
+                if (!renamed && field.getDefaultValue() != null) {
+                    next.put(field.getName(), field.getDefaultValue());
+                }
             }
+            migrated = next;
         }
         return migrated;
+    }
+
+    private SchemaVersionRecord schemaVersion(EngineModel model, int version) {
+        for (SchemaVersionRecord candidate : model.getSchemaVersions()) {
+            if (candidate.getVersion() == version) {
+                return candidate;
+            }
+        }
+        if (version == model.getSchemaVersion()) {
+            return currentSchema(model);
+        }
+        throw new IllegalStateException("schema version not found for runtime migration: " + version);
     }
 
     private WorkflowDefinition workflow(EngineModel model, int version) {

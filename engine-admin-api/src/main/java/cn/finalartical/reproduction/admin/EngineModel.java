@@ -16,6 +16,7 @@ public class EngineModel {
     private List<String> states = new ArrayList<String>();
     private List<EngineTransition> transitions = new ArrayList<EngineTransition>();
     private List<SchemaVersionRecord> schemaVersions = new ArrayList<SchemaVersionRecord>();
+    private List<SchemaMigrationRecord> schemaMigrations = new ArrayList<SchemaMigrationRecord>();
     private List<WorkflowVersionRecord> workflowVersions = new ArrayList<WorkflowVersionRecord>();
 
     public EngineModel() {
@@ -123,6 +124,14 @@ public class EngineModel {
 
     public void setSchemaVersions(List<SchemaVersionRecord> schemaVersions) {
         this.schemaVersions = schemaVersions == null ? new ArrayList<SchemaVersionRecord>() : schemaVersions;
+    }
+
+    public List<SchemaMigrationRecord> getSchemaMigrations() {
+        return schemaMigrations;
+    }
+
+    public void setSchemaMigrations(List<SchemaMigrationRecord> schemaMigrations) {
+        this.schemaMigrations = schemaMigrations == null ? new ArrayList<SchemaMigrationRecord>() : schemaMigrations;
     }
 
     public List<WorkflowVersionRecord> getWorkflowVersions() {

@@ -124,6 +124,16 @@ public final class EngineAdminServer {
             writeJson(exchange, 201, service.addField(decode(segments.get(1)), readPayload(exchange)));
             return;
         }
+        if (segments.size() == 4 && "models".equals(segments.get(0)) && "fields".equals(segments.get(2))
+                && "rename".equals(segments.get(3)) && "POST".equals(method)) {
+            writeJson(exchange, 201, service.renameField(decode(segments.get(1)), readPayload(exchange)));
+            return;
+        }
+        if (segments.size() == 4 && "models".equals(segments.get(0)) && "fields".equals(segments.get(2))
+                && "remove".equals(segments.get(3)) && "POST".equals(method)) {
+            writeJson(exchange, 200, service.removeField(decode(segments.get(1)), readPayload(exchange)));
+            return;
+        }
         if (segments.size() == 3 && "models".equals(segments.get(0)) && "transitions".equals(segments.get(2)) && "POST".equals(method)) {
             writeJson(exchange, 201, service.addTransition(decode(segments.get(1)), readPayload(exchange)));
             return;

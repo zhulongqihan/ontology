@@ -29,7 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 public final class SqliteEngineStateRepository implements EngineStateRepository {
-    private static final int SCHEMA_VERSION = 4;
+    private static final int SCHEMA_VERSION = 5;
 
     private final Path databasePath;
     private final Path legacyJsonPath;
@@ -184,6 +184,17 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 try (PreparedStatement insert = connection.prepareStatement(
                         "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
                     insert.setInt(1, 4);
+                    insert.setString(2, Instant.now().toString());
+                    insert.executeUpdate();
+                }
+            }
+            if (!hasVersion(connection, 5)) {
+                for (String sql : readMigration("/schema/005_schema_migration.sql")) {
+                    if (!sql.trim().isEmpty()) statement.execute(sql);
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
+                    insert.setInt(1, 5);
                     insert.setString(2, Instant.now().toString());
                     insert.executeUpdate();
                 }
@@ -436,6 +447,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
     private void synchronizeConfigurationProjection(Connection connection, EngineState state) throws SQLException {
         String projectionTime = state.getUpdatedAt() == null ? Instant.now().toString() : state.getUpdatedAt();
         executeDelete(connection, "DELETE FROM schema_field");
+        executeDelete(connection, "DELETE FROM schema_migration");
         executeDelete(connection, "DELETE FROM schema_definition");
         executeDelete(connection, "DELETE FROM workflow_transition");
         executeDelete(connection, "DELETE FROM workflow_definition");
@@ -492,6 +504,22 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             }
             definitionInsert.executeBatch();
             fieldInsert.executeBatch();
+        }
+
+        try (PreparedStatement migrationInsert = connection.prepareStatement(
+                "INSERT INTO schema_migration(model_id, from_version, to_version, source_field, target_field, created_at) VALUES (?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.EngineModel model : state.getModels()) {
+                for (cn.finalartical.reproduction.admin.SchemaMigrationRecord migration : model.getSchemaMigrations()) {
+                    migrationInsert.setString(1, model.getId());
+                    migrationInsert.setInt(2, migration.getFromVersion());
+                    migrationInsert.setInt(3, migration.getToVersion());
+                    migrationInsert.setString(4, migration.getSourceField());
+                    migrationInsert.setString(5, migration.getTargetField());
+                    migrationInsert.setString(6, projectionTime);
+                    migrationInsert.addBatch();
+                }
+            }
+            migrationInsert.executeBatch();
         }
 
         try (PreparedStatement definitionInsert = connection.prepareStatement(
@@ -590,7 +618,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
      * Rehydrates configuration from normalized tables before the compatibility
      * aggregate is projected again.  The aggregate remains a migration/backup
      * envelope for runtime history, but configuration reads no longer depend on
-     * its embedded JSON arrays once v4 has data.
+     * its embedded JSON arrays once the normalized configuration projection has data.
      */
     private void loadConfigurationProjection(Connection connection, EngineState state) throws SQLException {
         if (!hasConfigurationProjection(connection)) {
@@ -644,6 +672,27 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                     versions.get(result.getInt("schema_version")).getFields().add(new cn.finalartical.reproduction.admin.EngineField(
                             result.getString("field_name"), result.getString("field_type"), result.getInt("required") != 0,
                             result.getInt("field_version"), readJsonValue(result.getString("default_value_json"))));
+                }
+            }
+        }
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT model_id, from_version, to_version, source_field, target_field "
+                        + "FROM schema_migration ORDER BY model_id, from_version, to_version, source_field")) {
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    String modelId = result.getString("model_id");
+                    Map<Integer, cn.finalartical.reproduction.admin.SchemaVersionRecord> versions = schemaVersions.get(modelId);
+                    if (versions == null || !versions.containsKey(result.getInt("from_version"))
+                            || !versions.containsKey(result.getInt("to_version"))) {
+                        throw new SQLException("schema_migration has no parent schema version: " + modelId);
+                    }
+                    cn.finalartical.reproduction.admin.EngineModel model = models.get(modelId);
+                    if (model == null) {
+                        throw new SQLException("schema_migration has no parent engine model: " + modelId);
+                    }
+                    model.getSchemaMigrations().add(new cn.finalartical.reproduction.admin.SchemaMigrationRecord(
+                            result.getInt("from_version"), result.getInt("to_version"),
+                            result.getString("source_field"), result.getString("target_field")));
                 }
             }
         }

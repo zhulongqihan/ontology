@@ -179,6 +179,65 @@ public class EngineAdminServiceTest {
     }
 
     @Test
+    public void runtimeAppliesAnExplicitRenamedFieldMigrationAcrossVersions() throws Exception {
+        Path path = Files.createTempDirectory("engine-schema-rename").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> first = new LinkedHashMap<String, Object>();
+        first.put("modelId", "interview-session");
+        first.put("contextId", "ctx-schema-rename");
+        first.put("event", "startInterview");
+        first.put("values", new LinkedHashMap<String, Object>() {{ put("candidateName", "改名迁移"); }});
+        service.execute(first);
+
+        service.renameField("interview-session", new LinkedHashMap<String, Object>() {{
+            put("sourceName", "candidateName");
+            put("targetName", "applicantName");
+        }});
+
+        Map<String, Object> second = new LinkedHashMap<String, Object>();
+        second.put("modelId", "interview-session");
+        second.put("contextId", "ctx-schema-rename");
+        second.put("event", "submitEvaluation");
+        RuntimeRun completed = service.execute(second);
+
+        assertEquals("PASSED", completed.getStatus());
+        assertEquals("改名迁移", completed.getValues().get("applicantName"));
+        assertTrue(!completed.getValues().containsKey("candidateName"));
+        assertEquals("applicantName", service.model("interview-session").getFields().get(0).getName());
+        assertEquals(1, service.model("interview-session").getSchemaMigrations().size());
+    }
+
+    @Test
+    public void runtimeDropsAFieldRemovedByTheTargetSchema() throws Exception {
+        Path path = Files.createTempDirectory("engine-schema-removal").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> first = new LinkedHashMap<String, Object>();
+        first.put("modelId", "interview-session");
+        first.put("contextId", "ctx-schema-removal");
+        first.put("event", "startInterview");
+        first.put("values", new LinkedHashMap<String, Object>() {{
+            put("candidateName", "删除迁移");
+            put("score", 88);
+        }});
+        service.execute(first);
+
+        service.removeField("interview-session", new LinkedHashMap<String, Object>() {{
+            put("name", "score");
+        }});
+
+        Map<String, Object> second = new LinkedHashMap<String, Object>();
+        second.put("modelId", "interview-session");
+        second.put("contextId", "ctx-schema-removal");
+        second.put("event", "submitEvaluation");
+        RuntimeRun completed = service.execute(second);
+
+        assertEquals("PASSED", completed.getStatus());
+        assertTrue(!completed.getValues().containsKey("score"));
+        assertEquals(3, completed.getAfterSnapshot().getSchemaVersion());
+        assertEquals(3, service.context("ctx-schema-removal").getSchemaVersion());
+    }
+
+    @Test
     public void ontologyRelationsAndServicesCanBeRegistered() throws Exception {
         Path path = Files.createTempDirectory("engine-admin").resolve("state.json");
         EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));

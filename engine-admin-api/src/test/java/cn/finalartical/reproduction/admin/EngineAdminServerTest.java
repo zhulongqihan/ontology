@@ -64,6 +64,35 @@ public class EngineAdminServerTest {
         }
     }
 
+    @Test
+    public void httpPublishesSchemaRenameAndRemovalAsNewVersions() throws Exception {
+        Path path = Files.createTempDirectory("engine-http-schema").resolve("state.json");
+        EngineAdminServer server = EngineAdminServer.start(0, path);
+        try {
+            Map<String, Object> rename = new LinkedHashMap<String, Object>();
+            rename.put("sourceName", "candidateName");
+            rename.put("targetName", "applicantName");
+            HttpResponse renamed = request(server, "POST", "/api/models/interview-session/fields/rename",
+                    mapper.writeValueAsString(rename));
+            assertEquals(201, renamed.status);
+            assertTrue(renamed.body.contains("applicantName"));
+
+            Map<String, Object> removal = new LinkedHashMap<String, Object>();
+            removal.put("name", "score");
+            HttpResponse removed = request(server, "POST", "/api/models/interview-session/fields/remove",
+                    mapper.writeValueAsString(removal));
+            assertEquals(200, removed.status);
+            assertTrue(removed.body.contains("schemaVersion"));
+
+            HttpResponse model = request(server, "GET", "/api/models/interview-session", null);
+            assertEquals(200, model.status);
+            assertTrue(model.body.contains("schemaMigrations"));
+            assertTrue(model.body.contains("applicantName"));
+        } finally {
+            server.stop();
+        }
+    }
+
     private HttpResponse request(EngineAdminServer server, String method, String path, String body) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.getPort() + path).openConnection();
         connection.setRequestMethod(method);

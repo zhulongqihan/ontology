@@ -41,7 +41,7 @@ public class SqliteEngineStateRepositoryTest {
                      "SELECT (SELECT max(version) FROM schema_version), (SELECT count(*) FROM engine_model), " +
                              "(SELECT count(*) FROM schema_field WHERE field_name = 'confidence')")) {
             assertTrue(result.next());
-            assertEquals(4, result.getInt(1));
+            assertEquals(5, result.getInt(1));
             assertEquals(2, result.getInt(2));
             assertTrue(result.getInt(3) >= 1);
         }
@@ -125,6 +125,32 @@ public class SqliteEngineStateRepositoryTest {
     }
 
     @Test
+    public void persistsExplicitSchemaMigrationInNormalizedTables() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-schema-migration");
+        Path database = directory.resolve("engine.db");
+        EngineAdminService service = new EngineAdminService(new SqliteEngineStateRepository(database));
+
+        service.renameField("interview-session", new LinkedHashMap<String, Object>() {{
+            put("sourceName", "candidateName");
+            put("targetName", "applicantName");
+        }});
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             ResultSet result = connection.createStatement().executeQuery(
+                     "SELECT from_version, to_version, source_field, target_field FROM schema_migration")) {
+            assertTrue(result.next());
+            assertEquals(2, result.getInt(1));
+            assertEquals(3, result.getInt(2));
+            assertEquals("candidateName", result.getString(3));
+            assertEquals("applicantName", result.getString(4));
+        }
+
+        EngineAdminService reloaded = new EngineAdminService(new SqliteEngineStateRepository(database));
+        assertEquals(1, reloaded.model("interview-session").getSchemaMigrations().size());
+        assertEquals("applicantName", reloaded.model("interview-session").getFields().get(0).getName());
+    }
+
+    @Test
     public void runtimeDomainProjectionSurvivesRepositoryRestart() throws Exception {
         Path directory = Files.createTempDirectory("engine-sqlite-runtime");
         Path database = directory.resolve("engine.db");
@@ -186,7 +212,7 @@ public class SqliteEngineStateRepositoryTest {
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT max(version) FROM schema_version), input_values_json, attempt, retry_of_run_id FROM runtime_run WHERE run_id = '" + written.getId() + "'")) {
             assertTrue(result.next());
-            assertEquals(4, result.getInt(1));
+            assertEquals(5, result.getInt(1));
             assertTrue(result.getString(2).contains("重启恢复"));
             assertEquals(1, result.getInt(3));
             assertEquals(null, result.getString(4));

@@ -149,6 +149,68 @@ public final class EngineAdminService {
         return field;
     }
 
+    public synchronized EngineField renameField(String modelId, Map<String, Object> payload) {
+        EngineModel model = model(modelId);
+        String sourceName = requiredText(payload, "sourceName");
+        String targetName = requiredText(payload, "targetName");
+        if (sourceName.equals(targetName)) {
+            throw new IllegalArgumentException("sourceName and targetName must differ");
+        }
+        EngineField source = null;
+        int sourceIndex = -1;
+        for (int index = 0; index < model.getFields().size(); index++) {
+            EngineField field = model.getFields().get(index);
+            if (sourceName.equals(field.getName())) {
+                source = field;
+                sourceIndex = index;
+            }
+            if (targetName.equals(field.getName())) {
+                throw new IllegalArgumentException("field already exists: " + targetName);
+            }
+        }
+        if (source == null) {
+            throw new IllegalArgumentException("field not found: " + sourceName);
+        }
+        int fromVersion = model.getSchemaVersion();
+        int toVersion = fromVersion + 1;
+        EngineField renamed = new EngineField(targetName, source.getType(), source.isRequired(), toVersion,
+                source.getDefaultValue());
+        model.getFields().remove(sourceIndex);
+        model.getFields().add(sourceIndex, renamed);
+        model.setSchemaVersion(toVersion);
+        model.getSchemaVersions().add(new SchemaVersionRecord(toVersion, Instant.now().toString(), copyFields(model.getFields())));
+        model.getSchemaMigrations().add(new SchemaMigrationRecord(fromVersion, toVersion, sourceName, targetName));
+        appendAudit("SCHEMA_FIELD_RENAMED", "SchemaVersion", modelId + ":v" + toVersion,
+                "field renamed: " + sourceName + " -> " + targetName);
+        touch(model);
+        save();
+        return renamed;
+    }
+
+    public synchronized EngineModel removeField(String modelId, Map<String, Object> payload) {
+        EngineModel model = model(modelId);
+        String name = requiredText(payload, "name");
+        EngineField removed = null;
+        for (EngineField field : model.getFields()) {
+            if (name.equals(field.getName())) {
+                removed = field;
+                break;
+            }
+        }
+        if (removed == null) {
+            throw new IllegalArgumentException("field not found: " + name);
+        }
+        int version = model.getSchemaVersion() + 1;
+        model.getFields().remove(removed);
+        model.setSchemaVersion(version);
+        model.getSchemaVersions().add(new SchemaVersionRecord(version, Instant.now().toString(), copyFields(model.getFields())));
+        appendAudit("SCHEMA_FIELD_REMOVED", "SchemaVersion", modelId + ":v" + version,
+                "field removed: " + name);
+        touch(model);
+        save();
+        return model;
+    }
+
     public synchronized EngineTransition addTransition(String modelId, Map<String, Object> payload) {
         EngineModel model = model(modelId);
         String fromState = requiredText(payload, "fromState");
