@@ -1,15 +1,10 @@
 package cn.finalartical.reproduction.admin;
 
-import cn.finalartical.reproduction.flexible.FieldDefinition;
 import cn.finalartical.reproduction.flexible.FieldType;
-import cn.finalartical.reproduction.flexible.FlexibleEngine;
-import cn.finalartical.reproduction.flexible.WorkflowDefinition;
-import cn.finalartical.reproduction.flexible.WorkflowTransition;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +22,7 @@ public final class EngineAdminService {
 
     private final EngineStateRepository repository;
     private final EngineState state;
+    private final EngineRuntimeService runtimeService;
 
     public EngineAdminService(EngineStateRepository repository) {
         if (repository == null) {
@@ -34,10 +30,17 @@ public final class EngineAdminService {
         }
         this.repository = repository;
         this.state = repository.load();
-        migrateProductIdentity();
+        boolean changed = migrateProductIdentity();
+        changed = normalizeModelVersions() || changed;
+        changed = normalizeContexts() || changed;
+        if (changed) {
+            touch(state);
+            save();
+        }
+        this.runtimeService = new EngineRuntimeService(repository, state);
     }
 
-    private void migrateProductIdentity() {
+    private boolean migrateProductIdentity() {
         boolean changed = false;
         if (LEGACY_ENGINE_ID.equals(state.getEngineId())) {
             state.setEngineId(ENGINE_ID);
@@ -57,10 +60,7 @@ public final class EngineAdminService {
                 changed = true;
             }
         }
-        if (changed) {
-            state.setUpdatedAt(Instant.now().toString());
-            repository.save(state);
-        }
+        return changed;
     }
 
     public synchronized Map<String, Object> overview() {
@@ -106,6 +106,7 @@ public final class EngineAdminService {
         model.getStates().add(initialState);
         model.setUpdatedAt(Instant.now().toString());
         state.getModels().add(model);
+        appendAudit("MODEL_REGISTERED", "EngineModel", id, "model registered");
         touch(state);
         save();
         return model;
@@ -139,6 +140,8 @@ public final class EngineAdminService {
                 version, payload.get("defaultValue"));
         model.getFields().add(field);
         model.setSchemaVersion(version);
+        model.getSchemaVersions().add(new SchemaVersionRecord(version, Instant.now().toString(), copyFields(model.getFields())));
+        appendAudit("SCHEMA_PUBLISHED", "SchemaVersion", modelId + ":v" + version, "field added: " + name);
         touch(model);
         save();
         return field;
@@ -162,6 +165,11 @@ public final class EngineAdminService {
         }
         EngineTransition transition = new EngineTransition(fromState, event, toState);
         model.getTransitions().add(transition);
+        model.setWorkflowVersion(model.getWorkflowVersion() < 1 ? 1 : model.getWorkflowVersion() + 1);
+        model.getWorkflowVersions().add(new WorkflowVersionRecord(model.getWorkflowVersion(), Instant.now().toString(),
+                model.getInitialState(), copyTransitions(model.getTransitions())));
+        appendAudit("WORKFLOW_PUBLISHED", "WorkflowVersion", modelId + ":v" + model.getWorkflowVersion(),
+                "transition added: " + event);
         touch(model);
         save();
         return transition;
@@ -183,6 +191,7 @@ public final class EngineAdminService {
         type.setFixedAttributes(stringList(payload.get("fixedAttributes")));
         type.setDynamicAttributes(stringList(payload.get("dynamicAttributes")));
         state.getOntologyTypes().add(type);
+        appendAudit("ONTOLOGY_TYPE_REGISTERED", "OntologyType", id, "ontology type registered");
         touch(state);
         save();
         return type;
@@ -201,6 +210,8 @@ public final class EngineAdminService {
         }
         OntologyRelationConfig relation = new OntologyRelationConfig(name, targetType, cardinality);
         type.getRelations().add(relation);
+        appendAudit("ONTOLOGY_RELATION_REGISTERED", "OntologyRelation", typeId + ":" + name,
+                "target=" + targetType + ", cardinality=" + cardinality);
         touch(state);
         save();
         return relation;
@@ -225,6 +236,7 @@ public final class EngineAdminService {
                 requiredText(payload, "endpoint"),
                 textValue(payload.get("version"), "v1"));
         state.getServices().add(service);
+        appendAudit("SERVICE_REGISTERED", "Service", id, "endpoint=" + service.getEndpoint());
         touch(state);
         save();
         return service;
@@ -235,81 +247,7 @@ public final class EngineAdminService {
     }
 
     public synchronized RuntimeRun execute(Map<String, Object> payload) {
-        long startedAt = System.nanoTime();
-        String modelId = requiredText(payload, "modelId");
-        EngineModel model = model(modelId);
-        Map<String, Object> values = mapValue(payload.get("values"));
-        String event = textValue(payload.get("event"), "");
-        String contextId = textValue(payload.get("contextId"), "").trim();
-        if (contextId.isEmpty()) {
-            contextId = "ctx-" + UUID.randomUUID().toString().substring(0, 8);
-        }
-        RuntimeRun previous = latestRun(modelId, contextId);
-        String runtimeState = previous == null ? model.getInitialState() : previous.getToState();
-        List<FieldDefinition> definitions = new ArrayList<FieldDefinition>();
-        for (EngineField field : model.getFields()) {
-            definitions.add(new FieldDefinition(field.getName(), FieldType.valueOf(field.getType()),
-                    field.isRequired(), field.getVersion()));
-        }
-        FlexibleEngine engine = new FlexibleEngine(definitions, workflow(model), runtimeState);
-        for (EngineField field : model.getFields()) {
-            if (field.getDefaultValue() != null) {
-                engine.set(field.getName(), field.getDefaultValue());
-            }
-        }
-        if (previous != null) {
-            for (Map.Entry<String, Object> value : previous.getValues().entrySet()) {
-                engine.set(value.getKey(), value.getValue());
-            }
-        }
-        for (Map.Entry<String, Object> value : values.entrySet()) {
-            engine.set(value.getKey(), value.getValue());
-        }
-
-        String fromState = engine.state();
-        String toState = fromState;
-        List<String> errors = new ArrayList<String>(engine.validate());
-        if (errors.isEmpty()) {
-            if (event.trim().isEmpty()) {
-                errors.add("event is required");
-            } else {
-                try {
-                    toState = engine.apply(event);
-                } catch (IllegalStateException exception) {
-                    errors.add(exception.getMessage());
-                }
-            }
-        }
-
-        RuntimeRun run = new RuntimeRun();
-        run.setId("run-" + UUID.randomUUID().toString().substring(0, 8));
-        run.setModelId(modelId);
-        run.setContextId(contextId);
-        run.setStatus(errors.isEmpty() ? "PASSED" : "FAILED");
-        run.setDataIdentity(DATA_IDENTITY);
-        run.setEvent(event);
-        run.setFromState(fromState);
-        run.setToState(toState);
-        run.setTraceId("trace-" + run.getId());
-        run.setCreatedAt(Instant.now().toString());
-        run.setDurationMs(Math.max(1L, (System.nanoTime() - startedAt) / 1000000L));
-        run.setValues(new LinkedHashMap<String, Object>(engine.values()));
-        run.setValidationErrors(errors);
-        state.getRuns().add(0, run);
-        while (state.getRuns().size() > 50) {
-            state.getRuns().remove(state.getRuns().size() - 1);
-        }
-        touch(state);
-        save();
-        return run;
-    }
-
-    private WorkflowDefinition workflow(EngineModel model) {
-        List<WorkflowTransition> transitions = new ArrayList<WorkflowTransition>();
-        for (EngineTransition transition : model.getTransitions()) {
-            transitions.add(new WorkflowTransition(transition.getFromState(), transition.getEvent(), transition.getToState()));
-        }
-        return new WorkflowDefinition(model.getInitialState(), transitions);
+        return runtimeService.execute(payload);
     }
 
     private OntologyTypeConfig ontologyType(String typeId) {
@@ -321,13 +259,127 @@ public final class EngineAdminService {
         throw new IllegalArgumentException("ontology type not found: " + typeId);
     }
 
-    private RuntimeRun latestRun(String modelId, String contextId) {
+    public synchronized RuntimeContextRecord context(String contextId) {
+        for (RuntimeContextRecord context : state.getContexts()) {
+            if (contextId.equals(context.getContextId())) {
+                return context;
+            }
+        }
+        throw new IllegalArgumentException("context not found: " + contextId);
+    }
+
+    public synchronized List<RuntimeContextRecord> contexts() {
+        return new ArrayList<RuntimeContextRecord>(state.getContexts());
+    }
+
+    public synchronized RuntimeRun run(String runId) {
         for (RuntimeRun run : state.getRuns()) {
-            if (modelId.equals(run.getModelId()) && contextId.equals(run.getContextId())) {
+            if (runId.equals(run.getId())) {
                 return run;
             }
         }
+        throw new IllegalArgumentException("run not found: " + runId);
+    }
+
+    public synchronized List<AuditEventRecord> auditEvents() {
+        return new ArrayList<AuditEventRecord>(state.getAuditEvents());
+    }
+
+    private boolean normalizeModelVersions() {
+        boolean changed = false;
+        for (EngineModel model : state.getModels()) {
+            if (model.getSchemaVersion() < 1) {
+                model.setSchemaVersion(1);
+                changed = true;
+            }
+            if (model.getUnknownFieldPolicy() == null || model.getUnknownFieldPolicy().trim().isEmpty()) {
+                model.setUnknownFieldPolicy("REJECT");
+                changed = true;
+            }
+            if (model.getSchemaVersions().isEmpty()) {
+                for (int version = 1; version <= model.getSchemaVersion(); version++) {
+                    List<EngineField> fields = new ArrayList<EngineField>();
+                    for (EngineField field : model.getFields()) {
+                        if (field.getVersion() <= version) {
+                            fields.add(copyField(field));
+                        }
+                    }
+                    model.getSchemaVersions().add(new SchemaVersionRecord(version,
+                            model.getUpdatedAt() == null ? Instant.now().toString() : model.getUpdatedAt(), fields));
+                }
+                changed = true;
+            }
+            if (model.getWorkflowVersion() < 1) {
+                model.setWorkflowVersion(1);
+                changed = true;
+            }
+            if (model.getWorkflowVersions().isEmpty()) {
+                model.getWorkflowVersions().add(new WorkflowVersionRecord(model.getWorkflowVersion(),
+                        model.getUpdatedAt() == null ? Instant.now().toString() : model.getUpdatedAt(),
+                        model.getInitialState(), copyTransitions(model.getTransitions())));
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private boolean normalizeContexts() {
+        boolean changed = false;
+        for (RuntimeRun run : state.getRuns()) {
+            if (!"PASSED".equals(run.getStatus()) || run.getContextId() == null || findContext(run.getContextId()) != null) {
+                continue;
+            }
+            RuntimeContextRecord context = new RuntimeContextRecord(run.getContextId(), run.getModelId(),
+                    run.getSchemaVersion() < 1 ? 1 : run.getSchemaVersion(),
+                    run.getWorkflowVersion() < 1 ? 1 : run.getWorkflowVersion(), run.getToState(),
+                    run.getStatus(), 1L, run.getCreatedAt());
+            context.setValues(run.getValues());
+            context.setLastRunId(run.getId());
+            if (run.getAfterSnapshot() != null) {
+                context.setLastSnapshotSha256(run.getAfterSnapshot().getSha256());
+            }
+            state.getContexts().add(context);
+            changed = true;
+        }
+        return changed;
+    }
+
+    private RuntimeContextRecord findContext(String contextId) {
+        for (RuntimeContextRecord context : state.getContexts()) {
+            if (contextId.equals(context.getContextId())) {
+                return context;
+            }
+        }
         return null;
+    }
+
+    private void appendAudit(String action, String targetType, String targetId, String details) {
+        state.getAuditEvents().add(0, new AuditEventRecord(
+                "audit-" + UUID.randomUUID().toString().substring(0, 8), action, targetType, targetId,
+                Instant.now().toString(), details));
+        while (state.getAuditEvents().size() > 200) {
+            state.getAuditEvents().remove(state.getAuditEvents().size() - 1);
+        }
+    }
+
+    private static EngineField copyField(EngineField field) {
+        return new EngineField(field.getName(), field.getType(), field.isRequired(), field.getVersion(), field.getDefaultValue());
+    }
+
+    private static List<EngineField> copyFields(List<EngineField> fields) {
+        List<EngineField> result = new ArrayList<EngineField>();
+        for (EngineField field : fields) {
+            result.add(copyField(field));
+        }
+        return result;
+    }
+
+    private static List<EngineTransition> copyTransitions(List<EngineTransition> transitions) {
+        List<EngineTransition> result = new ArrayList<EngineTransition>();
+        for (EngineTransition transition : transitions) {
+            result.add(new EngineTransition(transition.getFromState(), transition.getEvent(), transition.getToState()));
+        }
+        return result;
     }
 
     private int countFields() {
@@ -353,11 +405,35 @@ public final class EngineAdminService {
     }
 
     private void save() {
-        repository.save(state);
+        try {
+            repository.save(state, state.getRevision());
+        } catch (RuntimeException exception) {
+            try {
+                restoreState(repository.load());
+            } catch (RuntimeException ignored) {
+                // Preserve the original write failure; the next service instance can still reload persisted state.
+            }
+            throw exception;
+        }
+    }
+
+    private void restoreState(EngineState restored) {
+        state.setEngineId(restored.getEngineId());
+        state.setEngineName(restored.getEngineName());
+        state.setEngineVersion(restored.getEngineVersion());
+        state.setUpdatedAt(restored.getUpdatedAt());
+        state.setRevision(restored.getRevision());
+        state.setModels(restored.getModels());
+        state.setOntologyTypes(restored.getOntologyTypes());
+        state.setServices(restored.getServices());
+        state.setRuns(restored.getRuns());
+        state.setContexts(restored.getContexts());
+        state.setAuditEvents(restored.getAuditEvents());
+        state.setIdempotencyRecords(restored.getIdempotencyRecords());
     }
 
     private static String requiredText(Map<String, Object> payload, String key) {
-        String value = textValue(payload.get(key), "").trim();
+        String value = payload == null ? "" : textValue(payload.get(key), "").trim();
         if (value.isEmpty()) {
             throw new IllegalArgumentException(key + " is required");
         }
@@ -370,17 +446,6 @@ public final class EngineAdminService {
 
     private static boolean booleanValue(Object value, boolean fallback) {
         return value == null ? fallback : Boolean.parseBoolean(String.valueOf(value));
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> mapValue(Object value) {
-        if (value == null) {
-            return Collections.emptyMap();
-        }
-        if (!(value instanceof Map)) {
-            throw new IllegalArgumentException("values must be an object");
-        }
-        return (Map<String, Object>) value;
     }
 
     private static List<String> stringList(Object value) {

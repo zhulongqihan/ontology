@@ -38,7 +38,8 @@ Provider / Consumer 兼容调用
 - 本体模型：Questionnaire、Subject、Option 以及固定属性、动态属性和对象关系。
 - 本地兼容层：Provider / Consumer 的可运行本地实现，明确使用 `local://` 地址。
 - 管理 API：模型、字段、转换、本体类型、关系和服务注册的读取与写入。
-- 状态持久化：配置和运行历史默认保存到 SQLite `data/flexible-engine.db`，重启后重新加载。
+- 运行证据：每次运行固定引擎、Schema、Workflow 版本，保存独立 RuntimeContext、before/after Snapshot、SHA-256、Trace Span、幂等记录和错误原因。
+- 状态持久化：配置和运行历史默认保存到 SQLite `data/flexible-engine.db`，运行域事实同步写入 `runtime_context`、`runtime_run`、`execution_snapshot`、`trace`、`trace_span`、`audit_event` 和 `idempotency_record` 表，重启后重新加载。
 - 控制面前端：引擎总览、模型管理、Schema/字段、工作流、本体模型、服务注册和运行调试。
 - 契约回归：20 条接口契约规格、逐用例结果、Trace、报告和稳定哈希输出。
 
@@ -131,6 +132,11 @@ npm.cmd run dev
 | `POST` | `/api/ontology/types/{id}/relations` | 注册对象关系 |
 | `GET/POST` | `/api/services` | 查询或注册本地 Provider/Assembler |
 | `GET` | `/api/runs` | 查询运行历史 |
+| `GET` | `/api/runs/{id}` | 查询完整运行、前后快照和 Trace |
+| `GET` | `/api/runs/{id}/trace` | 查询 Trace Span 时间线 |
+| `GET` | `/api/contexts` | 查询运行上下文 |
+| `GET` | `/api/contexts/{id}` | 查询上下文当前状态 |
+| `GET` | `/api/audit-events` | 查询配置审计事件 |
 | `POST` | `/api/runtime/execute` | 按模型 Schema 和工作流执行一次运行 |
 
 运行请求示例：
@@ -179,14 +185,16 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 ## 当前限制与演进路线
 
-当前版本是论文级柔性引擎与本体化平台的可运行基础。仍需继续完善的工程能力包括：
+当前版本是论文级柔性引擎与本体化平台的可运行基础，但仍不是完整生产级实现。已完成运行域证据闭环的第一切片，仍需继续完善的工程能力包括：
 
-- SQLite 状态仓库第一切片已完成；仍需继续拆分模型、Schema、工作流、关系和运行记录的规范化表，并补充并发版本控制。
+- SQLite 已建立运行域规范化表和事务投影；模型、Schema、Workflow、本体和服务配置的规范化表及从投影读取仍待继续。
 - Schema 迁移规则、字段编辑/删除和版本回滚。
-- 运行重试、回滚、幂等和故障注入。
-- 请求—响应—Provider—Trace 的多 span 追踪。
-- 本体关系装配的运行时调用链和更多兼容场景。
+- 运行重试、可执行回滚、故障注入和更细粒度的并发冲突恢复。
+- 请求—响应—Provider 的真实多服务调用链和更多 Trace 语义。
+- 本体关系装配的目标类型、基数约束执行和更多兼容场景。
 - 将运行快照、Trace、审计日志和论文导出纳入独立的实验支撑层，并与引擎领域数据保持清晰边界。
+
+历史 JSON/SQLite 记录若生成于证据字段加入前，会保留为历史记录但显示为“旧记录/证据不完整”，不会被回填为当前运行结果。
 
 详细方向、工程需求和当前进度见：
 

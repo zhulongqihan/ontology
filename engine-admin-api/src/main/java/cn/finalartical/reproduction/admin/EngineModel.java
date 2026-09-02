@@ -8,11 +8,15 @@ public class EngineModel {
     private String name;
     private String description;
     private int schemaVersion;
+    private int workflowVersion = 1;
     private String initialState;
     private String updatedAt;
+    private String unknownFieldPolicy = "REJECT";
     private List<EngineField> fields = new ArrayList<EngineField>();
     private List<String> states = new ArrayList<String>();
     private List<EngineTransition> transitions = new ArrayList<EngineTransition>();
+    private List<SchemaVersionRecord> schemaVersions = new ArrayList<SchemaVersionRecord>();
+    private List<WorkflowVersionRecord> workflowVersions = new ArrayList<WorkflowVersionRecord>();
 
     public EngineModel() {
     }
@@ -57,6 +61,14 @@ public class EngineModel {
         this.schemaVersion = schemaVersion;
     }
 
+    public int getWorkflowVersion() {
+        return workflowVersion;
+    }
+
+    public void setWorkflowVersion(int workflowVersion) {
+        this.workflowVersion = workflowVersion;
+    }
+
     public String getInitialState() {
         return initialState;
     }
@@ -73,12 +85,20 @@ public class EngineModel {
         this.updatedAt = updatedAt;
     }
 
+    public String getUnknownFieldPolicy() {
+        return unknownFieldPolicy;
+    }
+
+    public void setUnknownFieldPolicy(String unknownFieldPolicy) {
+        this.unknownFieldPolicy = unknownFieldPolicy == null ? "REJECT" : unknownFieldPolicy;
+    }
+
     public List<EngineField> getFields() {
         return fields;
     }
 
     public void setFields(List<EngineField> fields) {
-        this.fields = fields == null ? new ArrayList<EngineField>() : fields;
+        this.fields = fields == null ? new ArrayList<EngineField>() : new ArrayList<EngineField>(fields);
     }
 
     public List<String> getStates() {
@@ -86,7 +106,7 @@ public class EngineModel {
     }
 
     public void setStates(List<String> states) {
-        this.states = states == null ? new ArrayList<String>() : states;
+        this.states = states == null ? new ArrayList<String>() : new ArrayList<String>(states);
     }
 
     public List<EngineTransition> getTransitions() {
@@ -94,6 +114,22 @@ public class EngineModel {
     }
 
     public void setTransitions(List<EngineTransition> transitions) {
-        this.transitions = transitions == null ? new ArrayList<EngineTransition>() : transitions;
+        this.transitions = transitions == null ? new ArrayList<EngineTransition>() : new ArrayList<EngineTransition>(transitions);
+    }
+
+    public List<SchemaVersionRecord> getSchemaVersions() {
+        return schemaVersions;
+    }
+
+    public void setSchemaVersions(List<SchemaVersionRecord> schemaVersions) {
+        this.schemaVersions = schemaVersions == null ? new ArrayList<SchemaVersionRecord>() : schemaVersions;
+    }
+
+    public List<WorkflowVersionRecord> getWorkflowVersions() {
+        return workflowVersions;
+    }
+
+    public void setWorkflowVersions(List<WorkflowVersionRecord> workflowVersions) {
+        this.workflowVersions = workflowVersions == null ? new ArrayList<WorkflowVersionRecord>() : workflowVersions;
     }
 }

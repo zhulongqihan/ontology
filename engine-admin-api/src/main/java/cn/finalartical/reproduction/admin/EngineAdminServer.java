@@ -19,6 +19,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.ConcurrentModificationException;
 import java.util.concurrent.Executors;
 
 public final class EngineAdminServer {
@@ -76,6 +77,8 @@ public final class EngineAdminServer {
                 writeError(exchange, 400, "invalid JSON payload: " + exception.getOriginalMessage());
             } catch (IllegalArgumentException exception) {
                 writeError(exchange, 400, exception.getMessage());
+            } catch (ConcurrentModificationException exception) {
+                writeError(exchange, 409, exception.getMessage());
             } catch (Exception exception) {
                 writeError(exchange, 500, exception.getMessage() == null ? "internal server error" : exception.getMessage());
             }
@@ -96,7 +99,7 @@ public final class EngineAdminServer {
         if (segments.size() == 1 && "health".equals(segments.get(0)) && "GET".equals(method)) {
             Map<String, Object> result = new LinkedHashMap<String, Object>();
             result.put("status", "UP");
-            result.put("engine", "flexible-engine-reproduction");
+            result.put("engine", "flexible-engine-ontology");
             result.put("dataIdentity", EngineAdminService.DATA_IDENTITY);
             writeJson(exchange, 200, result);
             return;
@@ -148,6 +151,27 @@ public final class EngineAdminServer {
         }
         if (segments.size() == 1 && "runs".equals(segments.get(0)) && "GET".equals(method)) {
             writeJson(exchange, 200, service.runs());
+            return;
+        }
+        if (segments.size() == 2 && "runs".equals(segments.get(0)) && "GET".equals(method)) {
+            writeJson(exchange, 200, service.run(decode(segments.get(1))));
+            return;
+        }
+        if (segments.size() == 3 && "runs".equals(segments.get(0)) && "trace".equals(segments.get(2))
+                && "GET".equals(method)) {
+            writeJson(exchange, 200, service.run(decode(segments.get(1))).getTrace());
+            return;
+        }
+        if (segments.size() == 2 && "contexts".equals(segments.get(0)) && "GET".equals(method)) {
+            writeJson(exchange, 200, service.context(decode(segments.get(1))));
+            return;
+        }
+        if (segments.size() == 1 && "contexts".equals(segments.get(0)) && "GET".equals(method)) {
+            writeJson(exchange, 200, service.contexts());
+            return;
+        }
+        if (segments.size() == 1 && "audit-events".equals(segments.get(0)) && "GET".equals(method)) {
+            writeJson(exchange, 200, service.auditEvents());
             return;
         }
         if (segments.size() == 2 && "runtime".equals(segments.get(0)) && "execute".equals(segments.get(1)) && "POST".equals(method)) {

@@ -21,9 +21,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.ConcurrentModificationException;
 
 public final class SqliteEngineStateRepository implements EngineStateRepository {
-    private static final int SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
 
     private final Path databasePath;
     private final Path legacyJsonPath;
@@ -48,10 +50,22 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             String payload = readPayload(connection);
             if (payload == null) {
                 EngineState seed = loadSeed();
-                write(connection, seed);
+                write(connection, seed, 0L);
                 return seed;
             }
-            return mapper.readValue(payload, EngineState.class);
+            EngineState state = mapper.readValue(payload, EngineState.class);
+            state.setRevision(currentRevision(connection));
+            connection.setAutoCommit(false);
+            try {
+                synchronizeRuntimeProjection(connection, state);
+                connection.commit();
+            } catch (SQLException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+            return state;
         } catch (IOException exception) {
             throw new IllegalStateException("cannot decode SQLite engine state: " + databasePath, exception);
         } catch (SQLException exception) {
@@ -66,7 +80,20 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         }
         try (Connection connection = open()) {
             migrate(connection);
-            write(connection, state);
+            write(connection, state, currentRevision(connection));
+        } catch (SQLException exception) {
+            throw new IllegalStateException("cannot save SQLite engine state: " + databasePath, exception);
+        }
+    }
+
+    @Override
+    public synchronized void save(EngineState state, long expectedRevision) {
+        if (state == null) {
+            throw new IllegalArgumentException("engine state must not be null");
+        }
+        try (Connection connection = open()) {
+            migrate(connection);
+            write(connection, state, expectedRevision);
         } catch (SQLException exception) {
             throw new IllegalStateException("cannot save SQLite engine state: " + databasePath, exception);
         }
@@ -109,15 +136,24 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
     private void migrate(Connection connection) throws SQLException {
         try (Statement statement = connection.createStatement()) {
             statement.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL PRIMARY KEY, applied_at TEXT NOT NULL)");
-            if (!hasVersion(connection, SCHEMA_VERSION)) {
-                for (String sql : readMigration()) {
-                    if (!sql.trim().isEmpty()) {
-                        statement.execute(sql);
-                    }
+            if (!hasVersion(connection, 1)) {
+                for (String sql : readMigration("/schema/001_initial.sql")) {
+                    if (!sql.trim().isEmpty()) statement.execute(sql);
                 }
                 try (PreparedStatement insert = connection.prepareStatement(
                         "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
-                    insert.setInt(1, SCHEMA_VERSION);
+                    insert.setInt(1, 1);
+                    insert.setString(2, Instant.now().toString());
+                    insert.executeUpdate();
+                }
+            }
+            if (!hasVersion(connection, 2)) {
+                for (String sql : readMigration("/schema/002_runtime_domain.sql")) {
+                    if (!sql.trim().isEmpty()) statement.execute(sql);
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
+                    insert.setInt(1, 2);
                     insert.setString(2, Instant.now().toString());
                     insert.executeUpdate();
                 }
@@ -135,11 +171,10 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         }
     }
 
-    private String[] readMigration() {
-        try (InputStream input = SqliteEngineStateRepository.class.getResourceAsStream(
-                "/schema/001_initial.sql")) {
+    private String[] readMigration(String resourceName) {
+        try (InputStream input = SqliteEngineStateRepository.class.getResourceAsStream(resourceName)) {
             if (input == null) {
-                throw new IllegalStateException("missing SQLite migration resource");
+                throw new IllegalStateException("missing SQLite migration resource: " + resourceName);
             }
             String sql = new String(readAll(input), StandardCharsets.UTF_8);
             return sql.split(";\\s*(?:\\r?\\n|$)");
@@ -157,7 +192,14 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         }
     }
 
-    private void write(Connection connection, EngineState state) throws SQLException {
+    private void write(Connection connection, EngineState state, long expectedRevision) throws SQLException {
+        long actualRevision = currentRevision(connection);
+        if (actualRevision != expectedRevision) {
+            throw new ConcurrentModificationException("engine state revision conflict: expected "
+                    + expectedRevision + " but was " + actualRevision);
+        }
+        long revision = expectedRevision + 1L;
+        state.setRevision(revision);
         String payload;
         try {
             payload = mapper.writeValueAsString(state);
@@ -167,7 +209,6 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         String hash = sha256(payload);
         connection.setAutoCommit(false);
         try {
-            long revision = currentRevision(connection) + 1L;
             try (PreparedStatement update = connection.prepareStatement(
                     "UPDATE engine_state SET payload_json = ?, payload_sha256 = ?, revision = ?, updated_at = ? WHERE state_id = 1")) {
                 update.setString(1, payload);
@@ -193,6 +234,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 audit.setString(3, Instant.now().toString());
                 audit.executeUpdate();
             }
+            synchronizeRuntimeProjection(connection, state);
             connection.commit();
         } catch (SQLException exception) {
             connection.rollback();
@@ -208,6 +250,188 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             try (ResultSet result = query.executeQuery()) {
                 return result.next() ? result.getLong(1) : 0L;
             }
+        }
+    }
+
+    private void synchronizeRuntimeProjection(Connection connection, EngineState state) throws SQLException {
+        executeDelete(connection, "DELETE FROM trace_span");
+        executeDelete(connection, "DELETE FROM trace");
+        executeDelete(connection, "DELETE FROM execution_snapshot");
+        executeDelete(connection, "DELETE FROM idempotency_record");
+        executeDelete(connection, "DELETE FROM runtime_run");
+        executeDelete(connection, "DELETE FROM runtime_context");
+        executeDelete(connection, "DELETE FROM audit_event");
+
+        try (PreparedStatement insert = connection.prepareStatement(
+                "INSERT INTO runtime_context(context_id, model_id, schema_version, workflow_version, state, status, revision, last_run_id, last_snapshot_sha256, values_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.RuntimeContextRecord context : state.getContexts()) {
+                insert.setString(1, context.getContextId());
+                insert.setString(2, context.getModelId());
+                insert.setInt(3, context.getSchemaVersion());
+                insert.setInt(4, context.getWorkflowVersion());
+                insert.setString(5, context.getState());
+                insert.setString(6, context.getStatus());
+                insert.setLong(7, context.getRevision());
+                insert.setString(8, context.getLastRunId());
+                insert.setString(9, context.getLastSnapshotSha256());
+                insert.setString(10, json(context.getValues()));
+                insert.setString(11, context.getUpdatedAt() == null ? Instant.now().toString() : context.getUpdatedAt());
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+
+        try (PreparedStatement insert = connection.prepareStatement(
+                "INSERT INTO runtime_run(run_id, model_id, context_id, engine_version, schema_version, workflow_version, status, data_identity, event, from_state, to_state, trace_id, idempotency_key, context_revision, context_committed, error_code, created_at, duration_ms, values_json, validation_errors_json, ontology_graph_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.RuntimeRun run : state.getRuns()) {
+                if (run.getId() == null || run.getModelId() == null || run.getContextId() == null
+                        || run.getStatus() == null || run.getDataIdentity() == null || run.getEvent() == null
+                        || run.getFromState() == null || run.getToState() == null || run.getTraceId() == null
+                        || run.getCreatedAt() == null) {
+                    continue;
+                }
+                insert.setString(1, run.getId());
+                insert.setString(2, run.getModelId());
+                insert.setString(3, run.getContextId());
+                insert.setString(4, run.getEngineVersion() == null ? "" : run.getEngineVersion());
+                insert.setInt(5, run.getSchemaVersion());
+                insert.setInt(6, run.getWorkflowVersion());
+                insert.setString(7, run.getStatus());
+                insert.setString(8, run.getDataIdentity());
+                insert.setString(9, run.getEvent());
+                insert.setString(10, run.getFromState());
+                insert.setString(11, run.getToState());
+                insert.setString(12, run.getTraceId());
+                insert.setString(13, run.getIdempotencyKey());
+                insert.setLong(14, run.getContextRevision());
+                insert.setInt(15, run.isContextCommitted() ? 1 : 0);
+                insert.setString(16, run.getErrorCode());
+                insert.setString(17, run.getCreatedAt());
+                insert.setLong(18, run.getDurationMs());
+                insert.setString(19, json(run.getValues()));
+                insert.setString(20, json(run.getValidationErrors()));
+                insert.setString(21, json(run.getOntologyGraph()));
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+
+        try (PreparedStatement insert = connection.prepareStatement(
+                "INSERT INTO execution_snapshot(snapshot_id, run_id, phase, context_id, model_id, schema_version, workflow_version, state, status, captured_at, values_json, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.RuntimeRun run : state.getRuns()) {
+                if (run.getId() == null || run.getContextId() == null || run.getModelId() == null
+                        || run.getFromState() == null || run.getToState() == null || run.getTraceId() == null) continue;
+                insertSnapshot(insert, run, run.getBeforeSnapshot());
+                insertSnapshot(insert, run, run.getAfterSnapshot());
+            }
+            insert.executeBatch();
+        }
+
+        try (PreparedStatement insert = connection.prepareStatement(
+                "INSERT INTO trace(trace_id, run_id, started_at, ended_at, duration_ms, status, sealed) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.RuntimeRun run : state.getRuns()) {
+                if (run.getId() == null) continue;
+                cn.finalartical.reproduction.admin.TraceRecord trace = run.getTrace();
+                if (trace == null) continue;
+                insert.setString(1, trace.getTraceId());
+                insert.setString(2, trace.getRunId());
+                insert.setString(3, trace.getStartedAt());
+                insert.setString(4, trace.getEndedAt());
+                insert.setLong(5, trace.getDurationMs());
+                insert.setString(6, trace.getStatus());
+                insert.setInt(7, trace.isSealed() ? 1 : 0);
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+
+        try (PreparedStatement insert = connection.prepareStatement(
+                "INSERT INTO trace_span(span_id, trace_id, name, started_at, ended_at, duration_ms, status, attributes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.RuntimeRun run : state.getRuns()) {
+                if (run.getId() == null) continue;
+                cn.finalartical.reproduction.admin.TraceRecord trace = run.getTrace();
+                if (trace == null) continue;
+                for (cn.finalartical.reproduction.admin.TraceSpanRecord span : trace.getSpans()) {
+                    insert.setString(1, span.getSpanId());
+                    insert.setString(2, span.getTraceId());
+                    insert.setString(3, span.getName());
+                    insert.setString(4, span.getStartedAt());
+                    insert.setString(5, span.getEndedAt());
+                    insert.setLong(6, span.getDurationMs());
+                    insert.setString(7, span.getStatus());
+                    insert.setString(8, json(span.getAttributes()));
+                    insert.addBatch();
+                }
+            }
+            insert.executeBatch();
+        }
+
+        try (PreparedStatement insert = connection.prepareStatement(
+                "INSERT INTO audit_event(audit_id, action, target_type, target_id, created_at, details) VALUES (?, ?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.AuditEventRecord event : state.getAuditEvents()) {
+                insert.setString(1, event.getId());
+                insert.setString(2, event.getAction());
+                insert.setString(3, event.getTargetType());
+                insert.setString(4, event.getTargetId());
+                insert.setString(5, event.getCreatedAt());
+                insert.setString(6, event.getDetails());
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+
+        try (PreparedStatement insert = connection.prepareStatement(
+                "INSERT INTO idempotency_record(scope, idempotency_key, request_sha256, run_id, created_at) VALUES (?, ?, ?, ?, ?)")) {
+            for (cn.finalartical.reproduction.admin.IdempotencyRecord record : state.getIdempotencyRecords()) {
+                if (record.getScope() == null || record.getKey() == null || record.getRequestSha256() == null
+                        || record.getRunId() == null || record.getCreatedAt() == null || !hasRun(state, record.getRunId())) continue;
+                insert.setString(1, record.getScope());
+                insert.setString(2, record.getKey());
+                insert.setString(3, record.getRequestSha256());
+                insert.setString(4, record.getRunId());
+                insert.setString(5, record.getCreatedAt());
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+    }
+
+    private void insertSnapshot(PreparedStatement insert, cn.finalartical.reproduction.admin.RuntimeRun run,
+                                cn.finalartical.reproduction.admin.ExecutionSnapshotRecord snapshot) throws SQLException {
+        if (snapshot == null) return;
+        insert.setString(1, run.getId() + ":" + snapshot.getPhase().toLowerCase());
+        insert.setString(2, run.getId());
+        insert.setString(3, snapshot.getPhase());
+        insert.setString(4, snapshot.getContextId());
+        insert.setString(5, snapshot.getModelId());
+        insert.setInt(6, snapshot.getSchemaVersion());
+        insert.setInt(7, snapshot.getWorkflowVersion());
+        insert.setString(8, snapshot.getState());
+        insert.setString(9, snapshot.getStatus());
+        insert.setString(10, snapshot.getCapturedAt());
+        insert.setString(11, json(snapshot.getValues()));
+        insert.setString(12, snapshot.getSha256());
+        insert.addBatch();
+    }
+
+    private boolean hasRun(EngineState state, String runId) {
+        for (cn.finalartical.reproduction.admin.RuntimeRun run : state.getRuns()) {
+            if (runId.equals(run.getId()) && run.getContextId() != null) return true;
+        }
+        return false;
+    }
+
+    private void executeDelete(Connection connection, String sql) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate(sql);
+        }
+    }
+
+    private String json(Object value) throws SQLException {
+        try {
+            return mapper.writeValueAsString(value == null ? Collections.emptyMap() : value);
+        } catch (IOException exception) {
+            throw new SQLException("cannot encode runtime projection", exception);
         }
     }
 

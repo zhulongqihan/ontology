@@ -33,6 +33,10 @@ public final class FlexibleEngine {
         return record.validate(schema);
     }
 
+    public List<String> validate(UnknownFieldPolicy unknownFieldPolicy) {
+        return record.validate(schema, unknownFieldPolicy);
+    }
+
     public Map<String, Object> values() {
         return record.asMap();
     }

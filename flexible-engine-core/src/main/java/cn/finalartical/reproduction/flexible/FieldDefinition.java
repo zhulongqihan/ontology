@@ -9,8 +9,13 @@ public final class FieldDefinition {
     private final FieldType type;
     private final boolean required;
     private final int version;
+    private final Object defaultValue;
 
     public FieldDefinition(String name, FieldType type, boolean required, int version) {
+        this(name, type, required, version, null);
+    }
+
+    public FieldDefinition(String name, FieldType type, boolean required, int version, Object defaultValue) {
         if (name == null || name.trim().isEmpty()) {
             throw new IllegalArgumentException("field name must not be blank");
         }
@@ -24,6 +29,7 @@ public final class FieldDefinition {
         this.type = type;
         this.required = required;
         this.version = version;
+        this.defaultValue = defaultValue;
     }
 
     public String getName() {
@@ -40,6 +46,10 @@ public final class FieldDefinition {
 
     public int getVersion() {
         return version;
+    }
+
+    public Object getDefaultValue() {
+        return defaultValue;
     }
 
     public Optional<String> validate(Object value) {
@@ -83,12 +93,13 @@ public final class FieldDefinition {
         return required == that.required
                 && version == that.version
                 && name.equals(that.name)
-                && type == that.type;
+                && type == that.type
+                && Objects.equals(defaultValue, that.defaultValue);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, type, required, version);
+        return Objects.hash(name, type, required, version, defaultValue);
     }
 
     @Override

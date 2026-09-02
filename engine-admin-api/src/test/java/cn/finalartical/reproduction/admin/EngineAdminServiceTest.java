@@ -6,6 +6,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.ConcurrentModificationException;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -150,5 +154,141 @@ public class EngineAdminServiceTest {
         assertEquals("柔性引擎与本体化平台", engine.get("name"));
         assertEquals("0.3.0", engine.get("version"));
         assertEquals("ENGINE_RUNTIME_RESULT", service.runs().get(0).getDataIdentity());
+    }
+
+    @Test
+    public void runtimeBindsSchemaWorkflowSnapshotsAndTraceSpans() throws Exception {
+        Path path = Files.createTempDirectory("engine-runtime-evidence").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> field = new LinkedHashMap<String, Object>();
+        field.put("name", "confidence");
+        field.put("type", "DECIMAL");
+        service.addField("interview-session", field);
+        Map<String, Object> transition = new LinkedHashMap<String, Object>();
+        transition.put("fromState", "COMPLETED");
+        transition.put("event", "archive");
+        transition.put("toState", "ARCHIVED");
+        service.addTransition("interview-session", transition);
+
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "interview-session");
+        payload.put("contextId", "ctx-evidence");
+        payload.put("event", "startInterview");
+        payload.put("idempotencyKey", "evidence-1");
+        payload.put("values", new LinkedHashMap<String, Object>() {{ put("candidateName", "证据测试"); }});
+        RuntimeRun run = service.execute(payload);
+
+        assertEquals(3, run.getSchemaVersion());
+        assertEquals(2, run.getWorkflowVersion());
+        assertEquals(run.getId(), run.getTrace().getRunId());
+        assertTrue(run.getTrace().isSealed());
+        assertEquals(Arrays.asList("request", "validation", "workflow", "ontology", "persistence", "response"),
+                spanNames(run));
+        assertEquals("IN_INTERVIEW", service.context("ctx-evidence").getState());
+        assertEquals(run.getAfterSnapshot().getSha256(), service.context("ctx-evidence").getLastSnapshotSha256());
+    }
+
+    @Test
+    public void idempotentRequestReturnsTheOriginalRunWithoutAdvancingAgain() throws Exception {
+        Path path = Files.createTempDirectory("engine-idempotency").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "interview-session");
+        payload.put("contextId", "ctx-idempotent");
+        payload.put("event", "startInterview");
+        payload.put("idempotencyKey", "same-request");
+        payload.put("values", new LinkedHashMap<String, Object>() {{ put("candidateName", "只执行一次"); }});
+
+        RuntimeRun first = service.execute(payload);
+        RuntimeRun second = service.execute(payload);
+
+        assertEquals(first.getId(), second.getId());
+        assertEquals(1, service.runs().size());
+        assertEquals(1L, service.context("ctx-idempotent").getRevision());
+    }
+
+    @Test
+    public void failedRunDoesNotChangeThePersistedContext() throws Exception {
+        Path path = Files.createTempDirectory("engine-rollback").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> first = new LinkedHashMap<String, Object>();
+        first.put("modelId", "interview-session");
+        first.put("contextId", "ctx-rollback");
+        first.put("event", "startInterview");
+        first.put("values", new LinkedHashMap<String, Object>() {{ put("candidateName", "不会污染"); }});
+        RuntimeRun passed = service.execute(first);
+
+        Map<String, Object> failed = new LinkedHashMap<String, Object>();
+        failed.put("modelId", "interview-session");
+        failed.put("contextId", "ctx-rollback");
+        failed.put("event", "submitEvaluation");
+        failed.put("values", new LinkedHashMap<String, Object>() {{ put("unexpected", true); }});
+        RuntimeRun rejected = service.execute(failed);
+
+        assertEquals("FAILED", rejected.getStatus());
+        assertEquals("IN_INTERVIEW", rejected.getToState());
+        assertEquals("IN_INTERVIEW", service.context("ctx-rollback").getState());
+        assertEquals(1L, service.context("ctx-rollback").getRevision());
+        assertTrue(passed.getBeforeSnapshot().getSha256() != null);
+        assertTrue(!passed.getBeforeSnapshot().getSha256().equals(passed.getAfterSnapshot().getSha256()));
+    }
+
+    @Test
+    public void configurationChangesProduceAuditEventsAndStaleWritersAreRejected() throws Exception {
+        Path path = Files.createTempDirectory("engine-concurrency").resolve("state.json");
+        EngineAdminService first = new EngineAdminService(new JsonEngineStateRepository(path));
+        EngineAdminService stale = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> model = new LinkedHashMap<String, Object>();
+        model.put("id", "concurrency-model");
+        model.put("name", "并发模型");
+        first.addModel(model);
+        assertTrue(first.auditEvents().size() >= 1);
+
+        try {
+            stale.addModel(new LinkedHashMap<String, Object>() {{ put("id", "stale-model"); put("name", "过期写入"); }});
+        } catch (ConcurrentModificationException expected) {
+            assertTrue(expected.getMessage().contains("revision conflict"));
+            return;
+        }
+        throw new AssertionError("stale writer must be rejected");
+    }
+
+    @Test
+    public void questionnaireRuntimeCanEmitAnObjectGraph() throws Exception {
+        Path path = Files.createTempDirectory("engine-ontology-runtime").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> field = new LinkedHashMap<String, Object>();
+        field.put("name", "subjects");
+        field.put("type", "JSON");
+        service.addField("questionnaire", field);
+        Map<String, Object> subject = new LinkedHashMap<String, Object>();
+        subject.put("id", "s-001");
+        subject.put("title", "集合");
+        subject.put("options", Arrays.<Object>asList(new LinkedHashMap<String, Object>() {{
+            put("id", "o-001"); put("label", "List");
+        }}));
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("name", "Java 基础");
+        values.put("subjectId", "subject-001");
+        values.put("subjects", Arrays.<Object>asList(subject));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "questionnaire");
+        payload.put("contextId", "ctx-questionnaire");
+        payload.put("event", "publish");
+        payload.put("values", values);
+
+        RuntimeRun run = service.execute(payload);
+
+        assertEquals("PASSED", run.getStatus());
+        assertEquals(3, ((List<?>) run.getOntologyGraph().get("objects")).size());
+        assertEquals(2, ((List<?>) run.getOntologyGraph().get("relations")).size());
+    }
+
+    private static List<String> spanNames(RuntimeRun run) {
+        List<String> names = new ArrayList<String>();
+        for (TraceSpanRecord span : run.getTrace().getSpans()) {
+            names.add(span.getName());
+        }
+        return names;
     }
 }

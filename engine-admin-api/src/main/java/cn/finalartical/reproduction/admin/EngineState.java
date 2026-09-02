@@ -8,10 +8,14 @@ public class EngineState {
     private String engineName;
     private String engineVersion;
     private String updatedAt;
+    private long revision;
     private List<EngineModel> models = new ArrayList<EngineModel>();
     private List<OntologyTypeConfig> ontologyTypes = new ArrayList<OntologyTypeConfig>();
     private List<ServiceRegistration> services = new ArrayList<ServiceRegistration>();
     private List<RuntimeRun> runs = new ArrayList<RuntimeRun>();
+    private List<RuntimeContextRecord> contexts = new ArrayList<RuntimeContextRecord>();
+    private List<AuditEventRecord> auditEvents = new ArrayList<AuditEventRecord>();
+    private List<IdempotencyRecord> idempotencyRecords = new ArrayList<IdempotencyRecord>();
 
     public String getEngineId() {
         return engineId;
@@ -45,6 +49,14 @@ public class EngineState {
         this.updatedAt = updatedAt;
     }
 
+    public long getRevision() {
+        return revision;
+    }
+
+    public void setRevision(long revision) {
+        this.revision = revision;
+    }
+
     public List<EngineModel> getModels() {
         return models;
     }
@@ -75,5 +87,29 @@ public class EngineState {
 
     public void setRuns(List<RuntimeRun> runs) {
         this.runs = runs == null ? new ArrayList<RuntimeRun>() : runs;
+    }
+
+    public List<RuntimeContextRecord> getContexts() {
+        return contexts;
+    }
+
+    public void setContexts(List<RuntimeContextRecord> contexts) {
+        this.contexts = contexts == null ? new ArrayList<RuntimeContextRecord>() : contexts;
+    }
+
+    public List<AuditEventRecord> getAuditEvents() {
+        return auditEvents;
+    }
+
+    public void setAuditEvents(List<AuditEventRecord> auditEvents) {
+        this.auditEvents = auditEvents == null ? new ArrayList<AuditEventRecord>() : auditEvents;
+    }
+
+    public List<IdempotencyRecord> getIdempotencyRecords() {
+        return idempotencyRecords;
+    }
+
+    public void setIdempotencyRecords(List<IdempotencyRecord> idempotencyRecords) {
+        this.idempotencyRecords = idempotencyRecords == null ? new ArrayList<IdempotencyRecord>() : idempotencyRecords;
     }
 }

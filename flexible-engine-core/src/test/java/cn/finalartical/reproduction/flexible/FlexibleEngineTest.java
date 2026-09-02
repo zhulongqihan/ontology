@@ -5,6 +5,8 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Collections;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -124,6 +126,55 @@ public class FlexibleEngineTest {
         assertEquals(0, schemas.validate(2, migrated).size());
         assertEquals(95, migrated.get("evaluationScore"));
         assertEquals(false, migrated.get("remote"));
+    }
+
+    @Test
+    public void publishedSchemaVersionsAreImmutableAndCannotBePublishedTwice() {
+        SchemaDefinition schema = new SchemaDefinition("assessment-session")
+                .publish(new SchemaVersion(1, Arrays.asList(
+                        new FieldDefinition("name", FieldType.STRING, true, 1))));
+
+        assertEquals(1, schema.currentVersion());
+        try {
+            schema.version(1).getFields().clear();
+        } catch (UnsupportedOperationException expected) {
+            // expected: a published schema is a historical fact
+        }
+        try {
+            schema.publish(new SchemaVersion(1, Arrays.asList(
+                    new FieldDefinition("other", FieldType.STRING, false, 1))));
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("already published"));
+            return;
+        }
+        throw new AssertionError("published schema must not be replaced");
+    }
+
+    @Test
+    public void unknownFieldsCanBeRejectedByExplicitPolicy() {
+        DynamicRecord record = new DynamicRecord().put("known", "ok").put("unexpected", true);
+        List<String> errors = record.validate(Arrays.asList(
+                new FieldDefinition("known", FieldType.STRING, true, 1)), UnknownFieldPolicy.REJECT);
+
+        assertEquals(1, errors.size());
+        assertTrue(errors.get(0).contains("unknown field"));
+    }
+
+    @Test
+    public void traceOnlyAcceptsSpansFromItsOwnTraceAndCanBeSealed() {
+        Trace trace = new Trace("run-1", "trace-1");
+        trace.append(new TraceSpan("span-1", "trace-1", "validation", "2026-09-02T00:00:00Z",
+                "2026-09-02T00:00:00Z", 0, "OK", Collections.<String, String>emptyMap()));
+        trace.seal();
+        assertTrue(trace.isSealed());
+        assertEquals(1, trace.getSpans().size());
+        try {
+            trace.append(new TraceSpan("span-2", "trace-1", "response", "2026-09-02T00:00:00Z",
+                    "2026-09-02T00:00:00Z", 0, "OK", Collections.<String, String>emptyMap()));
+        } catch (IllegalStateException expected) {
+            return;
+        }
+        throw new AssertionError("sealed trace must be append-only");
     }
 
     private static WorkflowDefinition workflow() {
