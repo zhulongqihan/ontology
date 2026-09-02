@@ -1,5 +1,8 @@
 package cn.finalartical.reproduction.admin;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class AuditEventRecord {
     private String id;
     private String action;
@@ -9,6 +12,7 @@ public class AuditEventRecord {
     private String details;
     private long beforeRevision;
     private long afterRevision;
+    private List<AuditChangeRecord> changes = new ArrayList<AuditChangeRecord>();
 
     public AuditEventRecord() {
     }
@@ -19,6 +23,13 @@ public class AuditEventRecord {
 
     public AuditEventRecord(String id, String action, String targetType, String targetId, String createdAt,
                             String details, long beforeRevision, long afterRevision) {
+        this(id, action, targetType, targetId, createdAt, details, beforeRevision, afterRevision,
+                new ArrayList<AuditChangeRecord>());
+    }
+
+    public AuditEventRecord(String id, String action, String targetType, String targetId, String createdAt,
+                            String details, long beforeRevision, long afterRevision,
+                            List<AuditChangeRecord> changes) {
         this.id = id;
         this.action = action;
         this.targetType = targetType;
@@ -27,6 +38,7 @@ public class AuditEventRecord {
         this.details = details;
         this.beforeRevision = beforeRevision;
         this.afterRevision = afterRevision;
+        setChanges(changes);
     }
 
     public String getId() { return id; }
@@ -45,4 +57,8 @@ public class AuditEventRecord {
     public void setBeforeRevision(long beforeRevision) { this.beforeRevision = beforeRevision; }
     public long getAfterRevision() { return afterRevision; }
     public void setAfterRevision(long afterRevision) { this.afterRevision = afterRevision; }
+    public List<AuditChangeRecord> getChanges() { return changes; }
+    public void setChanges(List<AuditChangeRecord> changes) {
+        this.changes = changes == null ? new ArrayList<AuditChangeRecord>() : changes;
+    }
 }

@@ -400,6 +400,8 @@ public class EngineAdminServiceTest {
         assertEquals(2L, service.context("ctx-run-rollback").getRevision());
         assertEquals(rollback.getId(), service.context("ctx-run-rollback").getLastRunId());
         assertEquals("RUN_ROLLED_BACK", service.auditEvents().get(0).getAction());
+        assertEquals(3, service.auditEvents().get(0).getChanges().size());
+        assertEquals("context.values", service.auditEvents().get(0).getChanges().get(2).getPath());
 
         try {
             service.rollback(passed.getId());
@@ -689,6 +691,12 @@ public class EngineAdminServiceTest {
         assertEquals(2L, first.getAfterRevision());
         assertEquals(3L, second.getAfterRevision());
         assertEquals(second.getAfterRevision(), service.revision());
+        assertEquals(2, second.getChanges().size());
+        assertEquals("schema.version", second.getChanges().get(0).getPath());
+        assertEquals(1, second.getChanges().get(0).getBeforeValue());
+        assertEquals(2, second.getChanges().get(0).getAfterValue());
+        assertEquals("schema.fields[score]", second.getChanges().get(1).getPath());
+        assertTrue(((Map<?, ?>) second.getChanges().get(1).getAfterValue()).containsKey("defaultValue"));
     }
 
     @Test
@@ -707,6 +715,29 @@ public class EngineAdminServiceTest {
         assertEquals("DOWN", service.services().get(1).getStatus());
         assertEquals("SERVICE_UPDATED", service.auditEvents().get(0).getAction());
         assertEquals("ONTOLOGY_RELATION_UPDATED", service.auditEvents().get(1).getAction());
+        assertEquals("service[ontology-assembler].status", service.auditEvents().get(0).getChanges().get(0).getPath());
+        assertEquals("READY", service.auditEvents().get(0).getChanges().get(0).getBeforeValue());
+        assertEquals("DOWN", service.auditEvents().get(0).getChanges().get(0).getAfterValue());
+        assertEquals("ontology[questionnaire].relations[containsSubject].cardinality",
+                service.auditEvents().get(1).getChanges().get(0).getPath());
+    }
+
+    @Test
+    public void repeatingAnIdenticalConfigurationCommandIsIdempotent() throws Exception {
+        Path path = Files.createTempDirectory("engine-admin-noop").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        long revision = service.revision();
+
+        service.updateOntologyRelation("questionnaire", "containsSubject", new LinkedHashMap<String, Object>() {{
+            put("targetType", "Subject");
+            put("cardinality", "1:N");
+        }});
+        service.updateService("ontology-assembler", new LinkedHashMap<String, Object>() {{
+            put("status", "READY");
+        }});
+
+        assertEquals(revision, service.revision());
+        assertTrue(service.auditEvents().isEmpty());
     }
 
     private static List<String> spanNames(RuntimeRun run) {

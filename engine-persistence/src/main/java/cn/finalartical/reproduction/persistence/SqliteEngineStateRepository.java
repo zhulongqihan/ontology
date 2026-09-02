@@ -1,9 +1,11 @@
 package cn.finalartical.reproduction.persistence;
 
 import cn.finalartical.reproduction.admin.DefaultEngineSeed;
+import cn.finalartical.reproduction.admin.AuditChangeRecord;
 import cn.finalartical.reproduction.admin.EngineState;
 import cn.finalartical.reproduction.admin.EngineStateRepository;
 import cn.finalartical.reproduction.admin.JsonEngineStateRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
@@ -12,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -29,7 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 public final class SqliteEngineStateRepository implements EngineStateRepository {
-    private static final int SCHEMA_VERSION = 7;
+    private static final int SCHEMA_VERSION = 8;
 
     private final Path databasePath;
     private final Path legacyJsonPath;
@@ -111,19 +114,71 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         return databasePath;
     }
 
-    public void backupTo(Path target) {
+    public synchronized void backupTo(Path target) {
         if (target == null) {
             throw new IllegalArgumentException("backup target must not be null");
         }
+        Path targetPath = target.toAbsolutePath().normalize();
+        if (databasePath.toAbsolutePath().normalize().equals(targetPath)) {
+            throw new IllegalArgumentException("backup target must differ from database path");
+        }
         load();
         try {
-            Path parent = target.toAbsolutePath().getParent();
+            Path parent = targetPath.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            Files.copy(databasePath, target, StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(databasePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException exception) {
-            throw new IllegalStateException("cannot backup SQLite engine state: " + target, exception);
+            throw new IllegalStateException("cannot backup SQLite engine state: " + targetPath, exception);
+        }
+    }
+
+    /**
+     * Restores a SQLite backup only after it has passed the same migrations and
+     * normalized projection checks used during a normal load.  The live file
+     * is replaced only after the staged copy is readable and valid.
+     */
+    public synchronized void restoreFrom(Path source) {
+        if (source == null) {
+            throw new IllegalArgumentException("restore source must not be null");
+        }
+        Path sourcePath = source.toAbsolutePath().normalize();
+        Path targetPath = databasePath.toAbsolutePath().normalize();
+        if (sourcePath.equals(targetPath)) {
+            throw new IllegalArgumentException("restore source must differ from database path");
+        }
+        if (!Files.isRegularFile(sourcePath)) {
+            throw new IllegalArgumentException("restore source is not a file: " + sourcePath);
+        }
+        Path parent = targetPath.getParent();
+        if (parent == null) {
+            throw new IllegalStateException("database path has no parent directory: " + targetPath);
+        }
+        Path staged = null;
+        try {
+            Files.createDirectories(parent);
+            staged = Files.createTempFile(parent, targetPath.getFileName().toString(), ".restore");
+            Files.copy(sourcePath, staged, StandardCopyOption.REPLACE_EXISTING);
+            new SqliteEngineStateRepository(staged).load();
+            try {
+                Files.move(staged, targetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(staged, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+            staged = null;
+        } catch (IOException exception) {
+            throw new IllegalStateException("cannot restore SQLite engine state: " + sourcePath, exception);
+        } catch (RuntimeException exception) {
+            throw new IllegalStateException("cannot restore SQLite engine state: " + sourcePath, exception);
+        } finally {
+            if (staged != null) {
+                try {
+                    Files.deleteIfExists(staged);
+                } catch (IOException ignored) {
+                    // The validated live database remains untouched.
+                }
+            }
         }
     }
 
@@ -217,6 +272,17 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 try (PreparedStatement insert = connection.prepareStatement(
                         "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
                     insert.setInt(1, 7);
+                    insert.setString(2, Instant.now().toString());
+                    insert.executeUpdate();
+                }
+            }
+            if (!hasVersion(connection, 8)) {
+                for (String sql : readMigration("/schema/008_audit_changes.sql")) {
+                    if (!sql.trim().isEmpty()) statement.execute(sql);
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
+                    insert.setInt(1, 8);
                     insert.setString(2, Instant.now().toString());
                     insert.executeUpdate();
                 }
@@ -439,7 +505,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         }
 
         try (PreparedStatement insert = connection.prepareStatement(
-                "INSERT INTO audit_event(audit_id, action, target_type, target_id, created_at, details, before_revision, after_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                "INSERT INTO audit_event(audit_id, action, target_type, target_id, created_at, details, before_revision, after_revision, changes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
             for (cn.finalartical.reproduction.admin.AuditEventRecord event : state.getAuditEvents()) {
                 insert.setString(1, event.getId());
                 insert.setString(2, event.getAction());
@@ -449,6 +515,7 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 insert.setString(6, event.getDetails());
                 insert.setLong(7, event.getBeforeRevision());
                 insert.setLong(8, event.getAfterRevision());
+                insert.setString(9, json(event.getChanges()));
                 insert.addBatch();
             }
             insert.executeBatch();
@@ -1123,14 +1190,15 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         if (rowCount(connection, "audit_event") > 0) {
             List<cn.finalartical.reproduction.admin.AuditEventRecord> events = new ArrayList<cn.finalartical.reproduction.admin.AuditEventRecord>();
             try (PreparedStatement query = connection.prepareStatement(
-                    "SELECT audit_id, action, target_type, target_id, created_at, details, before_revision, after_revision "
+                    "SELECT audit_id, action, target_type, target_id, created_at, details, before_revision, after_revision, changes_json "
                             + "FROM audit_event ORDER BY created_at DESC, rowid DESC")) {
                 try (ResultSet result = query.executeQuery()) {
                     while (result.next()) {
                         events.add(new cn.finalartical.reproduction.admin.AuditEventRecord(result.getString("audit_id"),
                                 result.getString("action"), result.getString("target_type"), result.getString("target_id"),
                                 result.getString("created_at"), result.getString("details"),
-                                result.getLong("before_revision"), result.getLong("after_revision")));
+                                result.getLong("before_revision"), result.getLong("after_revision"),
+                                readAuditChangesValue(result.getString("changes_json"))));
                     }
                 }
             }
@@ -1215,6 +1283,27 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
             return mapper.readValue(value, Object.class);
         } catch (IOException exception) {
             throw new SQLException("cannot decode configuration JSON value", exception);
+        }
+    }
+
+    private List<AuditChangeRecord> readAuditChangesValue(String value) throws SQLException {
+        if (value == null || value.trim().isEmpty()) {
+            return new ArrayList<AuditChangeRecord>();
+        }
+        try {
+            List<AuditChangeRecord> result = mapper.readValue(value,
+                    new TypeReference<List<AuditChangeRecord>>() { });
+            if (result == null) {
+                return new ArrayList<AuditChangeRecord>();
+            }
+            for (AuditChangeRecord change : result) {
+                if (change == null || change.getPath() == null || change.getPath().trim().isEmpty()) {
+                    throw new SQLException("audit change path must not be blank");
+                }
+            }
+            return result;
+        } catch (IOException exception) {
+            throw new SQLException("cannot decode audit change set", exception);
         }
     }
 

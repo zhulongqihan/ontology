@@ -394,10 +394,14 @@ final class EngineRuntimeService {
         while (state.getRuns().size() > 50) {
             state.getRuns().remove(state.getRuns().size() - 1);
         }
+        List<AuditChangeRecord> rollbackChanges = new ArrayList<AuditChangeRecord>();
+        rollbackChanges.add(new AuditChangeRecord("context.state", beforeState, targetState));
+        rollbackChanges.add(new AuditChangeRecord("context.status", beforeStatus, "ROLLED_BACK"));
+        rollbackChanges.add(new AuditChangeRecord("context.values", copyValue(beforeValues), copyValue(targetValues)));
         state.getAuditEvents().add(0, new AuditEventRecord(
                 "audit-" + UUID.randomUUID().toString().substring(0, 8), "RUN_ROLLED_BACK", "RuntimeRun",
                 runId, Instant.now().toString(), "rollbackRunId=" + rollbackRunId,
-                state.getRevision(), state.getRevision() + 1L));
+                state.getRevision(), state.getRevision() + 1L, rollbackChanges));
         while (state.getAuditEvents().size() > 200) {
             state.getAuditEvents().remove(state.getAuditEvents().size() - 1);
         }
@@ -652,6 +656,10 @@ final class EngineRuntimeService {
         } catch (IOException exception) {
             throw new IllegalStateException("cannot serialize provider evidence", exception);
         }
+    }
+
+    private Object copyValue(Object value) {
+        return value == null ? null : mapper.convertValue(value, Object.class);
     }
 
     private List<OntologyTypeDefinition> ontologyDefinitions() {

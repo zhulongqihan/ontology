@@ -42,6 +42,7 @@ public final class EngineAdminService {
         changed = normalizeOntologyTypes() || changed;
         changed = normalizeContexts() || changed;
         validateModelContracts();
+        validateAuditContracts();
         if (changed) {
             touch(state);
             save();
@@ -135,7 +136,12 @@ public final class EngineAdminService {
         model.getWorkflowVersions().add(new WorkflowVersionRecord(1, publishedAt, initialState,
                 new ArrayList<EngineTransition>()));
         state.getModels().add(model);
-        appendAudit("MODEL_REGISTERED", "EngineModel", id, "model registered");
+        appendAudit("MODEL_REGISTERED", "EngineModel", id, "model registered", changes(
+                change("model.id", null, id),
+                change("model.name", null, model.getName()),
+                change("model.initialState", null, initialState),
+                change("model.schemaVersion", null, 1),
+                change("model.workflowVersion", null, 1)));
         touch(state);
         save();
         return copy(model, EngineModel.class);
@@ -168,14 +174,17 @@ public final class EngineAdminService {
                 throw new IllegalArgumentException("field already exists: " + name);
             }
         }
-        int version = model.getSchemaVersion() + 1;
+        int previousVersion = model.getSchemaVersion();
+        int version = previousVersion + 1;
         EngineField field = new EngineField(name, type, booleanValue(payload.get("required"), false),
                 version, payload.get("defaultValue"));
         validateDefaultValue(field);
         model.getFields().add(field);
         model.setSchemaVersion(version);
         model.getSchemaVersions().add(new SchemaVersionRecord(version, Instant.now().toString(), copyFields(model.getFields())));
-        appendAudit("SCHEMA_PUBLISHED", "SchemaVersion", modelId + ":v" + version, "field added: " + name);
+        appendAudit("SCHEMA_PUBLISHED", "SchemaVersion", modelId + ":v" + version, "field added: " + name,
+                changes(change("schema.version", previousVersion, version),
+                        change(fieldPath(name), null, fieldSnapshot(field))));
         touch(model);
         save();
         return copy(field, EngineField.class);
@@ -207,13 +216,17 @@ public final class EngineAdminService {
         int toVersion = fromVersion + 1;
         EngineField renamed = new EngineField(targetName, source.getType(), source.isRequired(), toVersion,
                 source.getDefaultValue());
+        Map<String, Object> sourceSnapshot = fieldSnapshot(source);
         model.getFields().remove(sourceIndex);
         model.getFields().add(sourceIndex, renamed);
         model.setSchemaVersion(toVersion);
         model.getSchemaVersions().add(new SchemaVersionRecord(toVersion, Instant.now().toString(), copyFields(model.getFields())));
         model.getSchemaMigrations().add(new SchemaMigrationRecord(fromVersion, toVersion, sourceName, targetName));
         appendAudit("SCHEMA_FIELD_RENAMED", "SchemaVersion", modelId + ":v" + toVersion,
-                "field renamed: " + sourceName + " -> " + targetName);
+                "field renamed: " + sourceName + " -> " + targetName,
+                changes(change("schema.version", fromVersion, toVersion),
+                        change(fieldPath(sourceName), sourceSnapshot, null),
+                        change(fieldPath(targetName), null, fieldSnapshot(renamed))));
         touch(model);
         save();
         return copy(renamed, EngineField.class);
@@ -232,12 +245,16 @@ public final class EngineAdminService {
         if (removed == null) {
             throw new IllegalArgumentException("field not found: " + name);
         }
-        int version = model.getSchemaVersion() + 1;
+        int previousVersion = model.getSchemaVersion();
+        int version = previousVersion + 1;
+        Map<String, Object> removedSnapshot = fieldSnapshot(removed);
         model.getFields().remove(removed);
         model.setSchemaVersion(version);
         model.getSchemaVersions().add(new SchemaVersionRecord(version, Instant.now().toString(), copyFields(model.getFields())));
         appendAudit("SCHEMA_FIELD_REMOVED", "SchemaVersion", modelId + ":v" + version,
-                "field removed: " + name);
+                "field removed: " + name,
+                changes(change("schema.version", previousVersion, version),
+                        change(fieldPath(name), removedSnapshot, null)));
         touch(model);
         save();
         return copy(model, EngineModel.class);
@@ -253,19 +270,27 @@ public final class EngineAdminService {
                 throw new IllegalArgumentException("transition already exists: " + fromState + " / " + event);
             }
         }
+        List<String> previousStates = new ArrayList<String>(model.getStates());
         if (!model.getStates().contains(fromState)) {
             model.getStates().add(fromState);
         }
         if (!model.getStates().contains(toState)) {
             model.getStates().add(toState);
         }
+        int previousVersion = model.getWorkflowVersion();
         EngineTransition transition = new EngineTransition(fromState, event, toState);
         model.getTransitions().add(transition);
         model.setWorkflowVersion(model.getWorkflowVersion() < 1 ? 1 : model.getWorkflowVersion() + 1);
         model.getWorkflowVersions().add(new WorkflowVersionRecord(model.getWorkflowVersion(), Instant.now().toString(),
                 model.getInitialState(), copyTransitions(model.getTransitions())));
+        List<AuditChangeRecord> workflowChanges = new ArrayList<AuditChangeRecord>();
+        workflowChanges.add(change("workflow.version", previousVersion, model.getWorkflowVersion()));
+        if (!previousStates.equals(model.getStates())) {
+            workflowChanges.add(change("workflow.states", previousStates, model.getStates()));
+        }
+        workflowChanges.add(change(transitionPath(fromState, event), null, transitionSnapshot(transition)));
         appendAudit("WORKFLOW_PUBLISHED", "WorkflowVersion", modelId + ":v" + model.getWorkflowVersion(),
-                "transition added: " + event);
+                "transition added: " + event, workflowChanges);
         touch(model);
         save();
         return copy(transition, EngineTransition.class);
@@ -291,7 +316,11 @@ public final class EngineAdminService {
         type.setFixedAttributes(stringList(payload.get("fixedAttributes")));
         type.setDynamicAttributes(stringList(payload.get("dynamicAttributes")));
         state.getOntologyTypes().add(type);
-        appendAudit("ONTOLOGY_TYPE_REGISTERED", "OntologyType", id, "ontology type registered");
+        appendAudit("ONTOLOGY_TYPE_REGISTERED", "OntologyType", id, "ontology type registered", changes(
+                change("ontology[" + id + "].label", null, type.getLabel()),
+                change("ontology[" + id + "].description", null, type.getDescription()),
+                change("ontology[" + id + "].fixedAttributes", null, type.getFixedAttributes()),
+                change("ontology[" + id + "].dynamicAttributes", null, type.getDynamicAttributes())));
         touch(state);
         save();
         return copy(type, OntologyTypeConfig.class);
@@ -311,7 +340,9 @@ public final class EngineAdminService {
         OntologyRelationConfig relation = new OntologyRelationConfig(name, targetType, cardinality);
         type.getRelations().add(relation);
         appendAudit("ONTOLOGY_RELATION_REGISTERED", "OntologyRelation", typeId + ":" + name,
-                "target=" + targetType + ", cardinality=" + cardinality);
+                "target=" + targetType + ", cardinality=" + cardinality, changes(
+                        change(relationPath(typeId, name) + ".targetType", null, targetType),
+                        change(relationPath(typeId, name) + ".cardinality", null, cardinality)));
         touch(state);
         save();
         return copy(relation, OntologyRelationConfig.class);
@@ -334,10 +365,22 @@ public final class EngineAdminService {
         String cardinality = OntologyCardinality.parse(optionalText(payload, "cardinality", relation.getCardinality()))
                 .getExpression();
         ontologyTypeRef(targetType);
+        List<AuditChangeRecord> auditChanges = new ArrayList<AuditChangeRecord>();
+        if (!targetType.equals(relation.getTargetType())) {
+            auditChanges.add(change(relationPath(typeId, relationName) + ".targetType",
+                    relation.getTargetType(), targetType));
+        }
+        if (!cardinality.equals(relation.getCardinality())) {
+            auditChanges.add(change(relationPath(typeId, relationName) + ".cardinality",
+                    relation.getCardinality(), cardinality));
+        }
+        if (auditChanges.isEmpty()) {
+            return copy(relation, OntologyRelationConfig.class);
+        }
         relation.setTargetType(targetType);
         relation.setCardinality(cardinality);
         appendAudit("ONTOLOGY_RELATION_UPDATED", "OntologyRelation", type.getId() + ":" + relationName,
-                "target=" + targetType + ", cardinality=" + cardinality);
+                "target=" + targetType + ", cardinality=" + cardinality, auditChanges);
         touch(state);
         save();
         return copy(relation, OntologyRelationConfig.class);
@@ -366,7 +409,12 @@ public final class EngineAdminService {
                 requiredText(payload, "endpoint"),
                 textValue(payload.get("version"), "v1"));
         state.getServices().add(service);
-        appendAudit("SERVICE_REGISTERED", "Service", id, "endpoint=" + service.getEndpoint());
+        appendAudit("SERVICE_REGISTERED", "Service", id, "endpoint=" + service.getEndpoint(), changes(
+                change("service[" + id + "].name", null, service.getName()),
+                change("service[" + id + "].provider", null, service.getProvider()),
+                change("service[" + id + "].status", null, service.getStatus()),
+                change("service[" + id + "].endpoint", null, service.getEndpoint()),
+                change("service[" + id + "].version", null, service.getVersion())));
         touch(state);
         save();
         return copy(service, ServiceRegistration.class);
@@ -374,13 +422,37 @@ public final class EngineAdminService {
 
     public synchronized ServiceRegistration updateService(String serviceId, Map<String, Object> payload) {
         ServiceRegistration service = serviceRef(serviceId);
-        service.setName(optionalText(payload, "name", service.getName()));
-        service.setProvider(optionalText(payload, "provider", service.getProvider()));
-        service.setStatus(optionalText(payload, "status", service.getStatus()));
-        service.setEndpoint(optionalText(payload, "endpoint", service.getEndpoint()));
-        service.setVersion(optionalText(payload, "version", service.getVersion()));
+        String name = optionalText(payload, "name", service.getName());
+        String provider = optionalText(payload, "provider", service.getProvider());
+        String status = optionalText(payload, "status", service.getStatus());
+        String endpoint = optionalText(payload, "endpoint", service.getEndpoint());
+        String version = optionalText(payload, "version", service.getVersion());
+        List<AuditChangeRecord> auditChanges = new ArrayList<AuditChangeRecord>();
+        if (!name.equals(service.getName())) {
+            auditChanges.add(change("service[" + serviceId + "].name", service.getName(), name));
+        }
+        if (!provider.equals(service.getProvider())) {
+            auditChanges.add(change("service[" + serviceId + "].provider", service.getProvider(), provider));
+        }
+        if (!status.equals(service.getStatus())) {
+            auditChanges.add(change("service[" + serviceId + "].status", service.getStatus(), status));
+        }
+        if (!endpoint.equals(service.getEndpoint())) {
+            auditChanges.add(change("service[" + serviceId + "].endpoint", service.getEndpoint(), endpoint));
+        }
+        if (!version.equals(service.getVersion())) {
+            auditChanges.add(change("service[" + serviceId + "].version", service.getVersion(), version));
+        }
+        if (auditChanges.isEmpty()) {
+            return copy(service, ServiceRegistration.class);
+        }
+        service.setName(name);
+        service.setProvider(provider);
+        service.setStatus(status);
+        service.setEndpoint(endpoint);
+        service.setVersion(version);
         appendAudit("SERVICE_UPDATED", "Service", serviceId,
-                "provider=" + service.getProvider() + ", status=" + service.getStatus());
+                "provider=" + service.getProvider() + ", status=" + service.getStatus(), auditChanges);
         touch(state);
         save();
         return copy(service, ServiceRegistration.class);
@@ -606,6 +678,26 @@ public final class EngineAdminService {
         }
     }
 
+    private void validateAuditContracts() {
+        for (AuditEventRecord event : state.getAuditEvents()) {
+            if (event == null || isBlank(event.getId()) || isBlank(event.getAction())
+                    || isBlank(event.getTargetType()) || isBlank(event.getTargetId())) {
+                throw new IllegalStateException("audit event identity must not be blank");
+            }
+            if (event.getBeforeRevision() < 0 || event.getAfterRevision() < event.getBeforeRevision()
+                    || event.getAfterRevision() > state.getRevision()
+                    || (event.getAfterRevision() != 0 && event.getAfterRevision() == event.getBeforeRevision())) {
+                throw new IllegalStateException("audit event revision is outside the engine revision chain: "
+                        + event.getId());
+            }
+            for (AuditChangeRecord change : event.getChanges()) {
+                if (change == null || isBlank(change.getPath())) {
+                    throw new IllegalStateException("audit change path must not be blank: " + event.getId());
+                }
+            }
+        }
+    }
+
     private static boolean containsField(SchemaVersionRecord schema, String name) {
         for (EngineField field : schema.getFields()) {
             if (name.equals(field.getName())) {
@@ -676,12 +768,67 @@ public final class EngineAdminService {
     }
 
     private void appendAudit(String action, String targetType, String targetId, String details) {
+        appendAudit(action, targetType, targetId, details, new ArrayList<AuditChangeRecord>());
+    }
+
+    private void appendAudit(String action, String targetType, String targetId, String details,
+                             List<AuditChangeRecord> changes) {
         state.getAuditEvents().add(0, new AuditEventRecord(
                 "audit-" + UUID.randomUUID().toString().substring(0, 8), action, targetType, targetId,
-                Instant.now().toString(), details, state.getRevision(), state.getRevision() + 1L));
+                Instant.now().toString(), details, state.getRevision(), state.getRevision() + 1L,
+                changes));
         while (state.getAuditEvents().size() > 200) {
             state.getAuditEvents().remove(state.getAuditEvents().size() - 1);
         }
+    }
+
+    private AuditChangeRecord change(String path, Object beforeValue, Object afterValue) {
+        return new AuditChangeRecord(path, copyValue(beforeValue), copyValue(afterValue));
+    }
+
+    private List<AuditChangeRecord> changes(AuditChangeRecord... changes) {
+        List<AuditChangeRecord> result = new ArrayList<AuditChangeRecord>();
+        if (changes != null) {
+            for (AuditChangeRecord change : changes) {
+                if (change != null) {
+                    result.add(change);
+                }
+            }
+        }
+        return result;
+    }
+
+    private Object copyValue(Object value) {
+        return value == null ? null : mapper.convertValue(value, Object.class);
+    }
+
+    private static Map<String, Object> fieldSnapshot(EngineField field) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("type", field.getType());
+        result.put("required", field.isRequired());
+        result.put("version", field.getVersion());
+        result.put("defaultValue", field.getDefaultValue());
+        return result;
+    }
+
+    private static Map<String, Object> transitionSnapshot(EngineTransition transition) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("fromState", transition.getFromState());
+        result.put("event", transition.getEvent());
+        result.put("toState", transition.getToState());
+        return result;
+    }
+
+    private static String fieldPath(String name) {
+        return "schema.fields[" + name + "]";
+    }
+
+    private static String transitionPath(String fromState, String event) {
+        return "workflow.transitions[" + fromState + ":" + event + "]";
+    }
+
+    private static String relationPath(String typeId, String relationName) {
+        return "ontology[" + typeId + "].relations[" + relationName + "]";
     }
 
     private static EngineField copyField(EngineField field) {
@@ -764,6 +911,10 @@ public final class EngineAdminService {
             throw new IllegalArgumentException(key + " is required");
         }
         return value;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     private static String textValue(Object value, String fallback) {

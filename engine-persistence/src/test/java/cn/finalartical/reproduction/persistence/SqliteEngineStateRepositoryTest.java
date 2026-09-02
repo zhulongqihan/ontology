@@ -37,16 +37,65 @@ public class SqliteEngineStateRepositoryTest {
         assertEquals(5, reloaded.getModels().get(0).getFields().size());
         assertEquals(1L, reloaded.getAuditEvents().get(0).getBeforeRevision());
         assertEquals(2L, reloaded.getAuditEvents().get(0).getAfterRevision());
+        assertEquals(2, reloaded.getAuditEvents().get(0).getChanges().size());
+        assertEquals("schema.fields[confidence]", reloaded.getAuditEvents().get(0).getChanges().get(1).getPath());
         assertTrue(Files.size(directory.resolve("engine.db")) > 0);
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + directory.resolve("engine.db").toAbsolutePath());
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT max(version) FROM schema_version), (SELECT count(*) FROM engine_model), " +
                              "(SELECT count(*) FROM schema_field WHERE field_name = 'confidence')")) {
             assertTrue(result.next());
-            assertEquals(7, result.getInt(1));
+            assertEquals(8, result.getInt(1));
             assertEquals(2, result.getInt(2));
             assertTrue(result.getInt(3) >= 1);
         }
+    }
+
+    @Test
+    public void restoresOnlyAValidatedBackupAndLeavesLiveDatabaseUntouchedOnFailure() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-restore");
+        Path database = directory.resolve("engine.db");
+        Path backup = directory.resolve("backup.db");
+        Path corruptBackup = directory.resolve("corrupt-backup.db");
+        SqliteEngineStateRepository repository = new SqliteEngineStateRepository(database);
+        EngineAdminService service = new EngineAdminService(repository);
+
+        service.addField("interview-session", new LinkedHashMap<String, Object>() {{
+            put("name", "backupField");
+            put("type", "STRING");
+        }});
+        repository.backupTo(backup);
+        service.addField("interview-session", new LinkedHashMap<String, Object>() {{
+            put("name", "laterField");
+            put("type", "STRING");
+        }});
+
+        repository.restoreFrom(backup);
+
+        EngineState restored = new SqliteEngineStateRepository(database).load();
+        assertEquals(3, findModel(restored, "interview-session").getSchemaVersion());
+        assertTrue(hasField(restored, "interview-session", "backupField"));
+        assertTrue(!hasField(restored, "interview-session", "laterField"));
+
+        Files.copy(backup, corruptBackup, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + corruptBackup.toAbsolutePath());
+             PreparedStatement update = connection.prepareStatement(
+                     "UPDATE engine_model SET schema_version = ? WHERE model_id = ?")) {
+            update.setInt(1, 999);
+            update.setString(2, "interview-session");
+            update.executeUpdate();
+        }
+
+        try {
+            repository.restoreFrom(corruptBackup);
+            fail("corrupt backup must not replace the live database");
+        } catch (IllegalStateException exception) {
+            assertTrue(exception.getMessage().contains("cannot restore SQLite engine state"));
+        }
+
+        EngineState stillLive = new SqliteEngineStateRepository(database).load();
+        assertEquals(3, findModel(stillLive, "interview-session").getSchemaVersion());
+        assertTrue(hasField(stillLive, "interview-session", "backupField"));
     }
 
     @Test
@@ -151,6 +200,33 @@ public class SqliteEngineStateRepositoryTest {
             fail("runtime trace mismatch must be rejected");
         } catch (IllegalStateException exception) {
             assertTrue(exception.getCause().getMessage().contains("mismatched trace"));
+        }
+    }
+
+    @Test
+    public void rejectsMalformedAuditChangeSetBeforeRewritingCompatibilityPayload() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-audit-integrity");
+        Path database = directory.resolve("engine.db");
+        SqliteEngineStateRepository repository = new SqliteEngineStateRepository(database);
+        EngineAdminService service = new EngineAdminService(repository);
+        service.addField("interview-session", new LinkedHashMap<String, Object>() {{
+            put("name", "auditField");
+            put("type", "STRING");
+        }});
+
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement update = connection.prepareStatement(
+                     "UPDATE audit_event SET changes_json = ? WHERE action = ?")) {
+            update.setString(1, "{\"not\":\"an-array\"}");
+            update.setString(2, "SCHEMA_PUBLISHED");
+            update.executeUpdate();
+        }
+
+        try {
+            repository.load();
+            fail("malformed audit change set must be rejected");
+        } catch (IllegalStateException exception) {
+            assertTrue(exception.getCause().getMessage().contains("audit change set"));
         }
     }
 
@@ -266,7 +342,7 @@ public class SqliteEngineStateRepositoryTest {
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT max(version) FROM schema_version), input_values_json, attempt, retry_of_run_id FROM runtime_run WHERE run_id = '" + written.getId() + "'")) {
             assertTrue(result.next());
-            assertEquals(7, result.getInt(1));
+            assertEquals(8, result.getInt(1));
             assertTrue(result.getString(2).contains("重启恢复"));
             assertEquals(1, result.getInt(3));
             assertEquals(null, result.getString(4));
@@ -294,5 +370,14 @@ public class SqliteEngineStateRepositoryTest {
             }
         }
         throw new AssertionError("model not found: " + modelId);
+    }
+
+    private static boolean hasField(EngineState state, String modelId, String fieldName) {
+        for (EngineField field : findModel(state, modelId).getFields()) {
+            if (fieldName.equals(field.getName())) {
+                return true;
+            }
+        }
+        return false;
     }
 }
