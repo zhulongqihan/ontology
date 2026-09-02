@@ -14,7 +14,18 @@ public final class VersionedSchema {
         if (version < 1 || definitions == null) {
             throw new IllegalArgumentException("schema version and definitions must be valid");
         }
-        versions.put(version, Collections.unmodifiableList(new ArrayList<FieldDefinition>(definitions)));
+        if (versions.containsKey(version)) {
+            throw new IllegalArgumentException("schema version already registered: " + version);
+        }
+        List<FieldDefinition> copied = new ArrayList<FieldDefinition>();
+        java.util.Set<String> names = new java.util.LinkedHashSet<String>();
+        for (FieldDefinition definition : definitions) {
+            if (definition == null || !names.add(definition.getName())) {
+                throw new IllegalArgumentException("schema contains a null or duplicate field");
+            }
+            copied.add(definition);
+        }
+        versions.put(version, Collections.unmodifiableList(copied));
         return this;
     }
 
@@ -27,11 +38,20 @@ public final class VersionedSchema {
     }
 
     public List<String> validate(int version, DynamicRecord record) {
+        if (record == null) {
+            throw new IllegalArgumentException("record must not be null");
+        }
         List<FieldDefinition> definitions = requireVersion(version);
         return record.validate(definitions);
     }
 
     public DynamicRecord migrate(DynamicRecord source, int fromVersion, int toVersion) {
+        if (source == null) {
+            throw new IllegalArgumentException("source record must not be null");
+        }
+        if (fromVersion > toVersion) {
+            throw new IllegalArgumentException("schema migration must move forward");
+        }
         requireVersion(fromVersion);
         List<FieldDefinition> targetDefinitions = requireVersion(toVersion);
         DynamicRecord migrated = new DynamicRecord();
@@ -48,6 +68,13 @@ public final class VersionedSchema {
                 if (rule.getTargetName().equals(target.getName()) && rule.getDefaultValue() != null) {
                     migrated.put(target.getName(), rule.getDefaultValue());
                     break;
+                }
+            }
+        }
+        if (fromVersion == toVersion) {
+            for (FieldDefinition target : targetDefinitions) {
+                if (!migrated.contains(target.getName()) && source.contains(target.getName())) {
+                    migrated.put(target.getName(), source.get(target.getName()));
                 }
             }
         }

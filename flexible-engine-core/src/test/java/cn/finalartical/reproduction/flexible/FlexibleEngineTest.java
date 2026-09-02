@@ -56,6 +56,56 @@ public class FlexibleEngineTest {
     }
 
     @Test
+    public void nestedSnapshotHashIsIndependentOfNestedInsertionOrder() {
+        Map<String, Object> firstNested = new LinkedHashMap<String, Object>();
+        firstNested.put("b", Arrays.asList(2, 3));
+        firstNested.put("a", "nested");
+        Map<String, Object> first = new LinkedHashMap<String, Object>();
+        first.put("payload", firstNested);
+
+        Map<String, Object> secondNested = new LinkedHashMap<String, Object>();
+        secondNested.put("a", "nested");
+        secondNested.put("b", Arrays.asList(2, 3));
+        Map<String, Object> second = new LinkedHashMap<String, Object>();
+        second.put("payload", secondNested);
+
+        assertEquals(new ContextSnapshot(first).getSha256(), new ContextSnapshot(second).getSha256());
+    }
+
+    @Test
+    public void runtimeContextProducesImmutableVersionedSnapshot() {
+        RuntimeContext context = new RuntimeContext("ctx-1", "interview-session", 2, 1, "PENDING_INTERVIEW");
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("candidateName", "小羊");
+        context.apply("IN_INTERVIEW", values, "run-1", ExecutionStatus.PASSED);
+
+        ExecutionSnapshot snapshot = context.snapshot("2026-09-02T00:00:00Z");
+
+        assertEquals("IN_INTERVIEW", snapshot.getState());
+        assertEquals(1L, context.getRevision());
+        assertEquals(64, snapshot.getSha256().length());
+        try {
+            snapshot.getValues().put("score", 95);
+        } catch (UnsupportedOperationException expected) {
+            return;
+        }
+        throw new AssertionError("snapshot values must be immutable");
+    }
+
+    @Test
+    public void workflowRejectsDuplicateEventFromTheSameState() {
+        try {
+            new WorkflowDefinition("DRAFT", Arrays.asList(
+                    new WorkflowTransition("DRAFT", "publish", "PUBLISHED"),
+                    new WorkflowTransition("DRAFT", "publish", "ARCHIVED")));
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("duplicate"));
+            return;
+        }
+        throw new AssertionError("duplicate workflow event must be rejected");
+    }
+
+    @Test
     public void migratesRenamedFieldAndAddsDefaultValue() {
         VersionedSchema schemas = new VersionedSchema()
                 .register(1, Arrays.asList(
