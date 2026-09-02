@@ -114,6 +114,71 @@ public class EngineAdminServiceTest {
     }
 
     @Test
+    public void runtimeMigratesAStaleContextToTheCurrentSchemaBeforeValidation() throws Exception {
+        Path path = Files.createTempDirectory("engine-schema-migration").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> first = new LinkedHashMap<String, Object>();
+        first.put("modelId", "interview-session");
+        first.put("contextId", "ctx-schema-migration");
+        first.put("event", "startInterview");
+        first.put("values", new LinkedHashMap<String, Object>() {{ put("candidateName", "迁移测试"); }});
+        RuntimeRun started = service.execute(first);
+
+        Map<String, Object> field = new LinkedHashMap<String, Object>();
+        field.put("name", "riskLevel");
+        field.put("type", "STRING");
+        field.put("required", true);
+        field.put("defaultValue", "LOW");
+        service.addField("interview-session", field);
+
+        Map<String, Object> second = new LinkedHashMap<String, Object>();
+        second.put("modelId", "interview-session");
+        second.put("contextId", "ctx-schema-migration");
+        second.put("event", "submitEvaluation");
+        second.put("values", new LinkedHashMap<String, Object>() {{ put("evaluationScore", 92); }});
+        RuntimeRun completed = service.execute(second);
+
+        assertEquals(2, started.getSchemaVersion());
+        assertEquals(3, completed.getSchemaVersion());
+        assertEquals("PASSED", completed.getStatus());
+        assertEquals("LOW", completed.getValues().get("riskLevel"));
+        assertEquals(2, completed.getBeforeSnapshot().getSchemaVersion());
+        assertEquals(3, completed.getAfterSnapshot().getSchemaVersion());
+        assertEquals("true", completed.getTrace().getSpans().get(1).getAttributes().get("schemaMigrationApplied"));
+        assertEquals(3, service.context("ctx-schema-migration").getSchemaVersion());
+    }
+
+    @Test
+    public void failedSchemaMigrationDoesNotAdvanceTheContext() throws Exception {
+        Path path = Files.createTempDirectory("engine-schema-migration-failure").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> first = new LinkedHashMap<String, Object>();
+        first.put("modelId", "interview-session");
+        first.put("contextId", "ctx-schema-migration-failure");
+        first.put("event", "startInterview");
+        first.put("values", new LinkedHashMap<String, Object>() {{ put("candidateName", "迁移失败"); }});
+        service.execute(first);
+
+        Map<String, Object> field = new LinkedHashMap<String, Object>();
+        field.put("name", "approvalCode");
+        field.put("type", "STRING");
+        field.put("required", true);
+        service.addField("interview-session", field);
+
+        Map<String, Object> second = new LinkedHashMap<String, Object>();
+        second.put("modelId", "interview-session");
+        second.put("contextId", "ctx-schema-migration-failure");
+        second.put("event", "submitEvaluation");
+        RuntimeRun rejected = service.execute(second);
+
+        assertEquals("FAILED", rejected.getStatus());
+        assertEquals("VALIDATION_ERROR", rejected.getErrorCode());
+        assertEquals(2, service.context("ctx-schema-migration-failure").getSchemaVersion());
+        assertEquals(2, rejected.getBeforeSnapshot().getSchemaVersion());
+        assertEquals(3, rejected.getAfterSnapshot().getSchemaVersion());
+    }
+
+    @Test
     public void ontologyRelationsAndServicesCanBeRegistered() throws Exception {
         Path path = Files.createTempDirectory("engine-admin").resolve("state.json");
         EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));

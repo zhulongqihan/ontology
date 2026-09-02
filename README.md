@@ -32,6 +32,7 @@ Provider / Consumer 兼容调用
 
 - 柔性字段：`STRING`、`INTEGER`、`DECIMAL`、`BOOLEAN`、`JSON`、`OBJECT`。
 - 动态 Schema：字段可在运行中追加，Schema 版本随配置变化递增。
+- Schema 演进：旧上下文执行时按目标版本迁移同名字段并注入默认值，before/after 快照保留版本边界。
 - 数据校验：必填校验、类型校验和错误信息保留。
 - 工作流运行时：初始状态、事件、状态转换和非法事件拒绝。
 - 连续上下文：相同 `contextId` 会继承上次运行快照的状态和字段，实现跨请求迁移。
@@ -172,7 +173,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：46/46 通过。
+- Maven 多模块测试：48/48 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
@@ -194,7 +195,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 当前版本是论文级柔性引擎与本体化平台的可运行基础，但仍不是完整生产级实现。已完成运行域证据闭环的第一切片，仍需继续完善的工程能力包括：
 
 - SQLite 已建立配置域和运行域规范化表及事务投影；配置和运行事实读取已优先从规范化表重建，状态 JSON 仅保留为旧库兼容备份，加载前投影完整性校验已加入，配置表级并发审计仍待继续。
-- Schema 迁移规则、字段编辑/删除和版本回滚。
+- 字段改名/删除的显式迁移规则、Schema 版本回滚和更细粒度的兼容策略。
 - 故障注入、更细粒度的并发冲突恢复和重试策略配置。
 - 请求—响应—Provider 的真实多服务调用链和更多 Trace 语义。
 - 本体关系装配的更多跨类型、跨服务和兼容场景。

@@ -88,13 +88,17 @@ final class EngineRuntimeService {
                     model.getInitialState(), "CREATED", 0L, startedAtIso);
             context.setValues(defaultValues(currentSchema(model)));
         }
-        Map<String, Object> beforeValues = new LinkedHashMap<String, Object>(context.getValues());
+        int beforeSchemaVersion = context.getSchemaVersion();
+        int beforeWorkflowVersion = context.getWorkflowVersion();
+        Map<String, Object> contextValues = new LinkedHashMap<String, Object>(context.getValues());
+        Map<String, Object> beforeValues = new LinkedHashMap<String, Object>(contextValues);
+        Map<String, Object> executionValues = migrateContextValues(model, contextValues, beforeSchemaVersion);
         String fromState = context.getState();
         int schemaVersion = model.getSchemaVersion();
         int workflowVersion = model.getWorkflowVersion();
         List<FieldDefinition> definitions = definitions(currentSchema(model));
         FlexibleEngine engine = new FlexibleEngine(definitions, workflow(model, workflowVersion), fromState);
-        for (Map.Entry<String, Object> entry : beforeValues.entrySet()) {
+        for (Map.Entry<String, Object> entry : executionValues.entrySet()) {
             engine.set(entry.getKey(), entry.getValue());
         }
         for (Map.Entry<String, Object> entry : inputValues.entrySet()) {
@@ -113,8 +117,12 @@ final class EngineRuntimeService {
         if (!errors.isEmpty()) {
             errorCode = "VALIDATION_ERROR";
         }
+        Map<String, String> validationAttributes = mapOf("errorCount", String.valueOf(errors.size()),
+                "schemaFromVersion", String.valueOf(beforeSchemaVersion),
+                "schemaToVersion", String.valueOf(schemaVersion),
+                "schemaMigrationApplied", String.valueOf(beforeSchemaVersion != schemaVersion));
         addSpan(spans, traceId, "validation", validationStarted, errors.isEmpty() ? "OK" : "FAILED",
-                mapOf("errorCount", String.valueOf(errors.size())));
+                validationAttributes);
 
         long workflowStarted = System.nanoTime();
         if (errors.isEmpty()) {
@@ -174,7 +182,7 @@ final class EngineRuntimeService {
         run.setValues(afterValues);
         run.setOntologyGraph(ontologyGraph);
         run.setValidationErrors(errors);
-        run.setBeforeSnapshot(snapshot("BEFORE", contextId, modelId, schemaVersion, workflowVersion,
+        run.setBeforeSnapshot(snapshot("BEFORE", contextId, modelId, beforeSchemaVersion, beforeWorkflowVersion,
                 fromState, contextStatus(context), startedAtIso, beforeValues));
         run.setAfterSnapshot(snapshot("AFTER", contextId, modelId, schemaVersion, workflowVersion,
                 toState, status, Instant.now().toString(), afterValues));
@@ -394,6 +402,26 @@ final class EngineRuntimeService {
             }
         }
         return new SchemaVersionRecord(model.getSchemaVersion(), model.getUpdatedAt(), model.getFields());
+    }
+
+    private Map<String, Object> migrateContextValues(EngineModel model, Map<String, Object> source,
+                                                      int fromVersion) {
+        if (fromVersion > model.getSchemaVersion()) {
+            throw new IllegalStateException("runtime context schema version " + fromVersion
+                    + " is ahead of model schema version " + model.getSchemaVersion());
+        }
+        if (fromVersion == model.getSchemaVersion()) {
+            return new LinkedHashMap<String, Object>(source);
+        }
+        Map<String, Object> migrated = new LinkedHashMap<String, Object>();
+        for (EngineField field : currentSchema(model).getFields()) {
+            if (source.containsKey(field.getName())) {
+                migrated.put(field.getName(), source.get(field.getName()));
+            } else if (field.getDefaultValue() != null) {
+                migrated.put(field.getName(), field.getDefaultValue());
+            }
+        }
+        return migrated;
     }
 
     private WorkflowDefinition workflow(EngineModel model, int version) {
