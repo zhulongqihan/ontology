@@ -25,7 +25,7 @@ import java.util.Collections;
 import java.util.ConcurrentModificationException;
 
 public final class SqliteEngineStateRepository implements EngineStateRepository {
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 3;
 
     private final Path databasePath;
     private final Path legacyJsonPath;
@@ -158,6 +158,17 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                     insert.executeUpdate();
                 }
             }
+            if (!hasVersion(connection, 3)) {
+                for (String sql : readMigration("/schema/003_retry_and_rollback.sql")) {
+                    if (!sql.trim().isEmpty()) statement.execute(sql);
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)")) {
+                    insert.setInt(1, 3);
+                    insert.setString(2, Instant.now().toString());
+                    insert.executeUpdate();
+                }
+            }
         }
     }
 
@@ -282,7 +293,10 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
         }
 
         try (PreparedStatement insert = connection.prepareStatement(
-                "INSERT INTO runtime_run(run_id, model_id, context_id, engine_version, schema_version, workflow_version, status, data_identity, event, from_state, to_state, trace_id, idempotency_key, context_revision, context_committed, error_code, created_at, duration_ms, values_json, validation_errors_json, ontology_graph_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                "INSERT INTO runtime_run(run_id, model_id, context_id, engine_version, schema_version, workflow_version, status, data_identity, event, from_state, to_state, trace_id, idempotency_key, context_revision, context_committed, error_code, created_at, duration_ms, values_json, validation_errors_json, ontology_graph_json, input_values_json, retry_of_run_id, attempt) VALUES (" +
+                        "?, ?, ?, ?, ?, ?, ?, ?, " +
+                        "?, ?, ?, ?, ?, ?, ?, ?, " +
+                        "?, ?, ?, ?, ?, ?, ?, ?)")) {
             for (cn.finalartical.reproduction.admin.RuntimeRun run : state.getRuns()) {
                 if (run.getId() == null || run.getModelId() == null || run.getContextId() == null
                         || run.getStatus() == null || run.getDataIdentity() == null || run.getEvent() == null
@@ -311,6 +325,9 @@ public final class SqliteEngineStateRepository implements EngineStateRepository 
                 insert.setString(19, json(run.getValues()));
                 insert.setString(20, json(run.getValidationErrors()));
                 insert.setString(21, json(run.getOntologyGraph()));
+                insert.setString(22, json(run.getInputValues()));
+                insert.setString(23, run.getRetryOfRunId());
+                insert.setInt(24, run.getAttempt());
                 insert.addBatch();
             }
             insert.executeBatch();

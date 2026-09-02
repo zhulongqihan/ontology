@@ -21,6 +21,8 @@ public class RuntimeRun {
     private String createdAt;
     private long durationMs;
     private String idempotencyKey;
+    private String retryOfRunId;
+    private int attempt = 1;
     private long contextRevision;
     private boolean contextCommitted;
     private String errorCode;
@@ -28,6 +30,7 @@ public class RuntimeRun {
     private ExecutionSnapshotRecord afterSnapshot;
     private TraceRecord trace;
     private Map<String, Object> values = new LinkedHashMap<String, Object>();
+    private Map<String, Object> inputValues = new LinkedHashMap<String, Object>();
     private Map<String, Object> ontologyGraph = new LinkedHashMap<String, Object>();
     private List<String> validationErrors = new ArrayList<String>();
 
@@ -154,6 +157,22 @@ public class RuntimeRun {
         this.idempotencyKey = idempotencyKey;
     }
 
+    public String getRetryOfRunId() {
+        return retryOfRunId;
+    }
+
+    public void setRetryOfRunId(String retryOfRunId) {
+        this.retryOfRunId = retryOfRunId;
+    }
+
+    public int getAttempt() {
+        return attempt;
+    }
+
+    public void setAttempt(int attempt) {
+        this.attempt = attempt;
+    }
+
     public long getContextRevision() {
         return contextRevision;
     }
@@ -208,6 +227,14 @@ public class RuntimeRun {
 
     public void setValues(Map<String, Object> values) {
         this.values = values == null ? new LinkedHashMap<String, Object>() : new LinkedHashMap<String, Object>(values);
+    }
+
+    public Map<String, Object> getInputValues() {
+        return inputValues;
+    }
+
+    public void setInputValues(Map<String, Object> inputValues) {
+        this.inputValues = inputValues == null ? new LinkedHashMap<String, Object>() : new LinkedHashMap<String, Object>(inputValues);
     }
 
     public Map<String, Object> getOntologyGraph() {

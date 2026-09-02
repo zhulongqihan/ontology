@@ -44,6 +44,8 @@ final class EngineRuntimeService {
             contextId = "ctx-" + UUID.randomUUID().toString().substring(0, 8);
         }
         String idempotencyKey = textValue(payload == null ? null : payload.get("idempotencyKey"), "").trim();
+        String retryOfRunId = textValue(payload == null ? null : payload.get("retryOfRunId"), "").trim();
+        int attempt = intValue(payload == null ? null : payload.get("attempt"), 1);
         String scope = modelId + "|" + contextId;
         String requestSha256 = requestSha256(modelId, contextId, event, inputValues);
         if (!idempotencyKey.isEmpty()) {
@@ -160,9 +162,12 @@ final class EngineRuntimeService {
         run.setTraceId(traceId);
         run.setCreatedAt(startedAtIso);
         run.setIdempotencyKey(idempotencyKey.isEmpty() ? null : idempotencyKey);
+        run.setRetryOfRunId(retryOfRunId.isEmpty() ? null : retryOfRunId);
+        run.setAttempt(attempt);
         run.setContextRevision(passed ? context.getRevision() + 1L : context.getRevision());
         run.setContextCommitted(passed);
         run.setErrorCode(errorCode);
+        run.setInputValues(inputValues);
         run.setValues(afterValues);
         run.setOntologyGraph(ontologyGraph);
         run.setValidationErrors(errors);
@@ -216,6 +221,138 @@ final class EngineRuntimeService {
             throw exception;
         }
         return run;
+    }
+
+    synchronized RuntimeRun retry(String runId) {
+        RuntimeRun original = findRun(runId);
+        if (original == null) {
+            throw new IllegalArgumentException("run not found: " + runId);
+        }
+        if (!"FAILED".equals(original.getStatus())) {
+            throw new IllegalArgumentException("only FAILED runs can be retried: " + runId);
+        }
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", original.getModelId());
+        payload.put("contextId", original.getContextId());
+        payload.put("event", original.getEvent());
+        payload.put("values", new LinkedHashMap<String, Object>(original.getInputValues()));
+        payload.put("retryOfRunId", original.getId());
+        payload.put("attempt", original.getAttempt() + 1);
+        return execute(payload);
+    }
+
+    synchronized RuntimeRun rollback(String runId) {
+        RuntimeRun original = findRun(runId);
+        if (original == null) {
+            throw new IllegalArgumentException("run not found: " + runId);
+        }
+        if (!"PASSED".equals(original.getStatus())) {
+            throw new IllegalArgumentException("only PASSED runs can be rolled back: " + runId);
+        }
+        if (original.getBeforeSnapshot() == null) {
+            throw new IllegalArgumentException("run has no BEFORE snapshot: " + runId);
+        }
+        RuntimeContextRecord context = findContext(original.getModelId(), original.getContextId());
+        if (context == null) {
+            throw new IllegalArgumentException("context not found: " + original.getContextId());
+        }
+        if (!runId.equals(context.getLastRunId())) {
+            throw new ConcurrentModificationException("cannot rollback run after a newer context revision: " + runId);
+        }
+
+        String originalStateJson;
+        try {
+            originalStateJson = mapper.writeValueAsString(state);
+        } catch (IOException exception) {
+            throw new IllegalStateException("cannot prepare rollback transaction", exception);
+        }
+
+        long startedAt = System.nanoTime();
+        String rollbackRunId = "run-" + UUID.randomUUID().toString().substring(0, 8);
+        String traceId = "trace-" + rollbackRunId;
+        String startedAtIso = Instant.now().toString();
+        List<TraceSpanRecord> spans = new ArrayList<TraceSpanRecord>();
+        addSpan(spans, traceId, "request", System.nanoTime(), "OK",
+                mapOf("runId", runId, "contextId", original.getContextId()));
+
+        Map<String, Object> beforeValues = new LinkedHashMap<String, Object>(context.getValues());
+        String beforeState = context.getState();
+        String beforeStatus = contextStatus(context);
+        Map<String, Object> targetValues = new LinkedHashMap<String, Object>(original.getBeforeSnapshot().getValues());
+        String targetState = original.getBeforeSnapshot().getState();
+        addSpan(spans, traceId, "rollback", System.nanoTime(), "OK",
+                mapOf("fromState", beforeState, "toState", targetState));
+
+        RuntimeRun rollback = new RuntimeRun();
+        rollback.setId(rollbackRunId);
+        rollback.setModelId(original.getModelId());
+        rollback.setContextId(original.getContextId());
+        rollback.setEngineVersion(state.getEngineVersion());
+        rollback.setSchemaVersion(original.getSchemaVersion());
+        rollback.setWorkflowVersion(original.getWorkflowVersion());
+        rollback.setStatus("ROLLED_BACK");
+        rollback.setDataIdentity(EngineAdminService.DATA_IDENTITY);
+        rollback.setEvent("rollback");
+        rollback.setFromState(beforeState);
+        rollback.setToState(targetState);
+        rollback.setTraceId(traceId);
+        rollback.setCreatedAt(startedAtIso);
+        rollback.setIdempotencyKey(null);
+        rollback.setRetryOfRunId(null);
+        rollback.setAttempt(1);
+        rollback.setContextRevision(context.getRevision() + 1L);
+        rollback.setContextCommitted(true);
+        rollback.setErrorCode(null);
+        rollback.setInputValues(Collections.<String, Object>emptyMap());
+        rollback.setValues(targetValues);
+        rollback.setOntologyGraph(Collections.<String, Object>emptyMap());
+        rollback.setValidationErrors(Collections.<String>emptyList());
+        rollback.setBeforeSnapshot(snapshot("BEFORE", original.getContextId(), original.getModelId(),
+                original.getSchemaVersion(), original.getWorkflowVersion(), beforeState, beforeStatus,
+                startedAtIso, beforeValues));
+        rollback.setAfterSnapshot(snapshot("AFTER", original.getContextId(), original.getModelId(),
+                original.getSchemaVersion(), original.getWorkflowVersion(), targetState, "ROLLED_BACK",
+                Instant.now().toString(), targetValues));
+
+        context.setState(targetState);
+        context.setStatus("ROLLED_BACK");
+        context.setValues(targetValues);
+        context.setRevision(context.getRevision() + 1L);
+        context.setLastRunId(rollbackRunId);
+        context.setLastSnapshotSha256(rollback.getAfterSnapshot().getSha256());
+        context.setUpdatedAt(Instant.now().toString());
+
+        state.getRuns().add(0, rollback);
+        while (state.getRuns().size() > 50) {
+            state.getRuns().remove(state.getRuns().size() - 1);
+        }
+        state.getAuditEvents().add(0, new AuditEventRecord(
+                "audit-" + UUID.randomUUID().toString().substring(0, 8), "RUN_ROLLED_BACK", "RuntimeRun",
+                runId, Instant.now().toString(), "rollbackRunId=" + rollbackRunId));
+        while (state.getAuditEvents().size() > 200) {
+            state.getAuditEvents().remove(state.getAuditEvents().size() - 1);
+        }
+
+        long persistenceStarted = System.nanoTime();
+        addSpan(spans, traceId, "persistence", persistenceStarted, "OK",
+                mapOf("contextCommitted", "true", "rollbackOfRunId", runId));
+        long responseStarted = System.nanoTime();
+        addSpan(spans, traceId, "response", responseStarted, "OK", Collections.<String, String>emptyMap());
+        long durationMs = Math.max(1L, (System.nanoTime() - startedAt) / 1000000L);
+        rollback.setDurationMs(durationMs);
+        rollback.setTrace(trace(rollback, startedAtIso, spans, "ROLLED_BACK", durationMs));
+
+        try {
+            state.setUpdatedAt(Instant.now().toString());
+            repository.save(state, state.getRevision());
+        } catch (RuntimeException exception) {
+            restoreState(originalStateJson);
+            if (exception instanceof ConcurrentModificationException) {
+                throw (ConcurrentModificationException) exception;
+            }
+            throw exception;
+        }
+        return rollback;
     }
 
     private void restoreState(String stateJson) {
@@ -488,6 +625,21 @@ final class EngineRuntimeService {
 
     private static String textValue(Object value, String fallback) {
         return value == null ? fallback : String.valueOf(value);
+    }
+
+    private static int intValue(Object value, int fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            int result = Integer.parseInt(String.valueOf(value));
+            if (result < 1) {
+                throw new IllegalArgumentException("attempt must be positive");
+            }
+            return result;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("attempt must be an integer");
+        }
     }
 
     private static Map<String, String> mapOf(String... values) {

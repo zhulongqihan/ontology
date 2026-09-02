@@ -80,5 +80,14 @@ public class SqliteEngineStateRepositoryTest {
             assertEquals(6, result.getInt(3));
             assertEquals(1, result.getInt(4));
         }
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             ResultSet result = connection.createStatement().executeQuery(
+                     "SELECT (SELECT max(version) FROM schema_version), input_values_json, attempt, retry_of_run_id FROM runtime_run WHERE run_id = '" + written.getId() + "'")) {
+            assertTrue(result.next());
+            assertEquals(3, result.getInt(1));
+            assertTrue(result.getString(2).contains("重启恢复"));
+            assertEquals(1, result.getInt(3));
+            assertEquals(null, result.getString(4));
+        }
     }
 }

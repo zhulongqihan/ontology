@@ -250,6 +250,14 @@ public final class EngineAdminService {
         return runtimeService.execute(payload);
     }
 
+    public synchronized RuntimeRun retry(String runId) {
+        return runtimeService.retry(runId);
+    }
+
+    public synchronized RuntimeRun rollback(String runId) {
+        return runtimeService.rollback(runId);
+    }
+
     private OntologyTypeConfig ontologyType(String typeId) {
         for (OntologyTypeConfig type : state.getOntologyTypes()) {
             if (type.getId().equals(typeId)) {

@@ -43,10 +43,13 @@ public class EngineAdminServerTest {
 
             HttpResponse detail = request(server, "GET", "/api/runs/" + run.getId(), null);
             HttpResponse trace = request(server, "GET", "/api/runs/" + run.getId() + "/trace", null);
+            HttpResponse rollback = request(server, "POST", "/api/runs/" + run.getId() + "/rollback", "{}");
             assertEquals(200, detail.status);
             assertEquals(200, trace.status);
+            assertEquals(200, rollback.status);
             assertTrue(detail.body.contains("beforeSnapshot"));
             assertTrue(trace.body.contains("validation"));
+            assertTrue(rollback.body.contains("ROLLED_BACK"));
         } finally {
             server.stop();
         }

@@ -234,6 +234,58 @@ public class EngineAdminServiceTest {
     }
 
     @Test
+    public void failedRunCanBeRetriedAsANewAttempt() throws Exception {
+        Path path = Files.createTempDirectory("engine-retry").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "interview-session");
+        payload.put("contextId", "ctx-retry");
+        payload.put("event", "submitEvaluation");
+        payload.put("values", new LinkedHashMap<String, Object>());
+
+        RuntimeRun failed = service.execute(payload);
+        RuntimeRun retried = service.retry(failed.getId());
+
+        assertEquals("FAILED", retried.getStatus());
+        assertEquals(failed.getId(), retried.getRetryOfRunId());
+        assertEquals(2, retried.getAttempt());
+        assertTrue(!failed.getId().equals(retried.getId()));
+        assertEquals(2, service.runs().size());
+    }
+
+    @Test
+    public void passedRunCanBeRolledBackOnlyAtTheLatestContextRevision() throws Exception {
+        Path path = Files.createTempDirectory("engine-run-rollback").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("candidateName", "回滚测试");
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("modelId", "interview-session");
+        payload.put("contextId", "ctx-run-rollback");
+        payload.put("event", "startInterview");
+        payload.put("values", values);
+        RuntimeRun passed = service.execute(payload);
+
+        RuntimeRun rollback = service.rollback(passed.getId());
+
+        assertEquals("ROLLED_BACK", rollback.getStatus());
+        assertEquals("PENDING_INTERVIEW", rollback.getToState());
+        assertEquals("PENDING_INTERVIEW", service.context("ctx-run-rollback").getState());
+        assertEquals("ROLLED_BACK", service.context("ctx-run-rollback").getStatus());
+        assertEquals(2L, service.context("ctx-run-rollback").getRevision());
+        assertEquals(rollback.getId(), service.context("ctx-run-rollback").getLastRunId());
+        assertEquals("RUN_ROLLED_BACK", service.auditEvents().get(0).getAction());
+
+        try {
+            service.rollback(passed.getId());
+        } catch (ConcurrentModificationException expected) {
+            assertTrue(expected.getMessage().contains("newer context revision"));
+            return;
+        }
+        throw new AssertionError("a rollback must be rejected after the context revision changes");
+    }
+
+    @Test
     public void configurationChangesProduceAuditEventsAndStaleWritersAreRejected() throws Exception {
         Path path = Files.createTempDirectory("engine-concurrency").resolve("state.json");
         EngineAdminService first = new EngineAdminService(new JsonEngineStateRepository(path));
