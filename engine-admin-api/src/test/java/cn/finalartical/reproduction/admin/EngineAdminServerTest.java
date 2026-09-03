@@ -112,6 +112,34 @@ public class EngineAdminServerTest {
     }
 
     @Test
+    public void httpExecutesAndReturnsAFormalBaselineFlexiblePair() throws Exception {
+        Path path = Files.createTempDirectory("engine-http-comparison").resolve("state.json");
+        EngineAdminServer server = EngineAdminServer.start(0, path);
+        try {
+            Map<String, Object> values = new LinkedHashMap<String, Object>();
+            values.put("name", "HTTP 对比");
+            values.put("subjectId", "s-http");
+            Map<String, Object> payload = new LinkedHashMap<String, Object>();
+            payload.put("comparisonId", "cmp-http-001");
+            payload.put("caseId", "questionnaire-basic");
+            payload.put("modelId", "questionnaire");
+            payload.put("event", "publish");
+            payload.put("values", values);
+
+            HttpResponse response = request(server, "POST", "/api/comparisons/execute",
+                    mapper.writeValueAsString(payload));
+            assertEquals(200, response.status);
+            assertTrue(response.body.contains("RIGID_MAPPING_BASELINE"));
+            assertTrue(response.body.contains("FLEXIBLE_ENGINE"));
+            assertTrue(response.body.contains("cmp-http-001"));
+            assertTrue(response.body.contains("pairedRunId"));
+            assertTrue(response.body.contains("inputSha256"));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
     public void httpConfigurationUpdatesAndErrorsHaveStableContracts() throws Exception {
         Path path = Files.createTempDirectory("engine-http-contract").resolve("state.json");
         EngineAdminServer server = EngineAdminServer.start(0, path);

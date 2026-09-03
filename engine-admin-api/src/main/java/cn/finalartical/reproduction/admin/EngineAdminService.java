@@ -565,6 +565,20 @@ public final class EngineAdminService {
         return copy(runtimeService.execute(payload), RuntimeRun.class);
     }
 
+    public synchronized Map<String, Object> executeComparison(Map<String, Object> payload) {
+        Map<String, Object> result = runtimeService.executeComparison(payload);
+        Map<String, Object> copied = new LinkedHashMap<String, Object>(result);
+        Object baseline = result.get("baselineRun");
+        Object flexible = result.get("flexibleRun");
+        if (baseline instanceof RuntimeRun) {
+            copied.put("baselineRun", copy((RuntimeRun) baseline, RuntimeRun.class));
+        }
+        if (flexible instanceof RuntimeRun) {
+            copied.put("flexibleRun", copy((RuntimeRun) flexible, RuntimeRun.class));
+        }
+        return copied;
+    }
+
     public synchronized RuntimeRun retry(String runId) {
         return copy(runtimeService.retry(runId), RuntimeRun.class);
     }

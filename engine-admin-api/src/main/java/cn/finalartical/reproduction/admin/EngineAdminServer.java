@@ -239,6 +239,10 @@ public final class EngineAdminServer {
             writeJson(exchange, 200, service.execute(readPayload(exchange)));
             return;
         }
+        if (segments.size() == 2 && "comparisons".equals(segments.get(0)) && "execute".equals(segments.get(1)) && "POST".equals(method)) {
+            writeJson(exchange, 200, service.executeComparison(readPayload(exchange)));
+            return;
+        }
         writeError(exchange, 404, "ROUTE_NOT_FOUND", "route not found: " + method + " " + path, traceId);
     }
 

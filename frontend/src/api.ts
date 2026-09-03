@@ -72,6 +72,12 @@ export interface ServiceRegistration {
 export interface RuntimeRun {
   id: string
   modelId: string
+  executionMode?: 'FLEXIBLE_ENGINE' | 'RIGID_MAPPING_BASELINE' | string
+  comparisonId?: string | null
+  pairedRunId?: string | null
+  caseId?: string | null
+  inputSha256?: string | null
+  configurationSha256?: string | null
   ontologyTypeId?: string | null
   ontologyVersion?: number
   ontologyDefinitionSha256?: string | null
@@ -83,6 +89,7 @@ export interface RuntimeRun {
   toState: string
   traceId: string
   createdAt: string
+  durationNs?: number
   durationMs: number
   engineVersion?: string
   schemaVersion?: number
@@ -124,6 +131,7 @@ export interface TraceSpan {
   name: string
   startedAt: string
   endedAt: string
+  durationNs?: number
   durationMs: number
   status: string
   attributes: Record<string, string>
@@ -134,11 +142,20 @@ export interface TraceRecord {
   traceId: string
   startedAt: string
   endedAt: string
+  durationNs?: number
   durationMs: number
   status: string
   sealed: boolean
   lifecycle?: string
   spans: TraceSpan[]
+}
+
+export interface ComparisonResult {
+  comparisonId: string
+  caseId: string
+  comparable: boolean
+  baselineRun: RuntimeRun
+  flexibleRun: RuntimeRun
 }
 
 export interface AuditEvent {
@@ -269,6 +286,11 @@ export const engineApi = {
     }),
   execute: (payload: { modelId: string; contextId?: string; event: string; values: Record<string, unknown>; ontology?: unknown; idempotencyKey?: string }) =>
     request<RuntimeRun>('/api/runtime/execute', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  executeComparison: (payload: { modelId: string; event: string; values: Record<string, unknown>; ontology?: unknown; comparisonId?: string; caseId?: string }) =>
+    request<ComparisonResult>('/api/comparisons/execute', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

@@ -363,6 +363,11 @@ public class EngineAdminServiceTest {
         assertEquals("SKIPPED", run.getTrace().getSpans().get(4).getStatus());
         assertEquals("COMMITTED", run.getTrace().getSpans().get(5).getStatus());
         assertEquals("PREPARED", run.getTrace().getSpans().get(6).getStatus());
+        assertTrue(run.getDurationNs() > 0);
+        assertTrue(run.getTrace().getDurationNs() > 0);
+        for (TraceSpanRecord span : run.getTrace().getSpans()) {
+            assertTrue(span.getDurationNs() > 0);
+        }
         assertEquals("IN_INTERVIEW", service.context("ctx-evidence").getState());
         assertEquals(run.getAfterSnapshot().getSha256(), service.context("ctx-evidence").getLastSnapshotSha256());
     }
@@ -925,6 +930,80 @@ public class EngineAdminServiceTest {
 
         assertEquals(revision, service.revision());
         assertTrue(service.auditEvents().isEmpty());
+    }
+
+    @Test
+    public void comparisonCreatesAnIndependentPairedBaselineAndFlexibleRun() throws Exception {
+        Path path = Files.createTempDirectory("engine-comparison-pair").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("comparisonId", "cmp-independent-001");
+        payload.put("caseId", "questionnaire-basic");
+        payload.put("modelId", "questionnaire");
+        payload.put("event", "publish");
+        payload.put("values", new LinkedHashMap<String, Object>() {{
+            put("name", "对比问卷");
+            put("subjectId", "subject-001");
+        }});
+
+        Map<String, Object> result = service.executeComparison(payload);
+        RuntimeRun baseline = (RuntimeRun) result.get("baselineRun");
+        RuntimeRun flexible = (RuntimeRun) result.get("flexibleRun");
+
+        assertTrue((Boolean) result.get("comparable"));
+        assertEquals(RigidMappingBaseline.MODE, baseline.getExecutionMode());
+        assertEquals("FLEXIBLE_ENGINE", flexible.getExecutionMode());
+        assertEquals("PASSED", baseline.getStatus());
+        assertEquals("PASSED", flexible.getStatus());
+        assertEquals(baseline.getInputSha256(), flexible.getInputSha256());
+        assertNotEquals(baseline.getConfigurationSha256(), flexible.getConfigurationSha256());
+        assertEquals(flexible.getId(), baseline.getPairedRunId());
+        assertEquals(baseline.getId(), flexible.getPairedRunId());
+        assertTrue(spanNames(baseline).contains("mapping"));
+        assertTrue(spanNames(flexible).contains("provider"));
+        assertEquals(2, service.runs().size());
+
+        Map<String, Object> repeated = service.executeComparison(payload);
+        assertEquals(baseline.getId(), ((RuntimeRun) repeated.get("baselineRun")).getId());
+        assertEquals(flexible.getId(), ((RuntimeRun) repeated.get("flexibleRun")).getId());
+        assertEquals(2, service.runs().size());
+
+        EngineAdminService reloaded = new EngineAdminService(new JsonEngineStateRepository(path));
+        assertEquals(RigidMappingBaseline.MODE, reloaded.run(baseline.getId()).getExecutionMode());
+        assertEquals(flexible.getId(), reloaded.run(baseline.getId()).getPairedRunId());
+        assertEquals(baseline.getId(), reloaded.run(flexible.getId()).getPairedRunId());
+    }
+
+    @Test
+    public void comparisonShowsFlexibleAdaptationWhenBaselineCannotMapANewField() throws Exception {
+        Path path = Files.createTempDirectory("engine-comparison-adaptation").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        service.addField("questionnaire", new LinkedHashMap<String, Object>() {{
+            put("name", "reviewerNote");
+            put("type", "STRING");
+            put("required", false);
+        }});
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("comparisonId", "cmp-adaptation-001");
+        payload.put("caseId", "questionnaire-new-field");
+        payload.put("modelId", "questionnaire");
+        payload.put("event", "publish");
+        payload.put("values", new LinkedHashMap<String, Object>() {{
+            put("name", "可扩展问卷");
+            put("subjectId", "subject-002");
+            put("reviewerNote", "动态字段");
+        }});
+
+        Map<String, Object> result = service.executeComparison(payload);
+        RuntimeRun baseline = (RuntimeRun) result.get("baselineRun");
+        RuntimeRun flexible = (RuntimeRun) result.get("flexibleRun");
+
+        assertEquals("FAILED", baseline.getStatus());
+        assertEquals("BASELINE_VALIDATION_ERROR", baseline.getErrorCode());
+        assertTrue(baseline.getValidationErrors().get(0).contains("reviewerNote"));
+        assertEquals("PASSED", flexible.getStatus());
+        assertEquals("PUBLISHED", flexible.getToState());
+        assertEquals(baseline.getInputSha256(), flexible.getInputSha256());
     }
 
     private static List<String> spanNames(RuntimeRun run) {

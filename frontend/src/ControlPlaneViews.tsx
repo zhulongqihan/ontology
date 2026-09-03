@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { engineApi, type EngineModel, type ExecutionSnapshot, type OntologyType, type RuntimeRun, type TraceRecord, type TraceSpan } from './api'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { engineApi, type ComparisonResult, type EngineModel, type ExecutionSnapshot, type OntologyType, type RuntimeRun, type TraceRecord, type TraceSpan } from './api'
 
 type ViewKey = 'overview' | 'models' | 'schema' | 'workflow' | 'ontology' | 'graph' | 'services' | 'runtime' | 'evidence' | 'compare'
 
@@ -65,9 +65,13 @@ export function KnowledgeGraphView({ types, runs }: { types: OntologyType[]; run
   </>
 }
 
-export function ComparisonView({ models, runs }: { models: EngineModel[]; runs: RuntimeRun[] }) {
-  const [baselineId, setBaselineId] = useState(runs[1]?.id ?? '')
-  const [flexibleId, setFlexibleId] = useState(runs[0]?.id ?? '')
+type ComparisonPayload = { modelId: string; event: string; values: Record<string, unknown>; ontology?: unknown; comparisonId?: string; caseId?: string }
+
+export function ComparisonView({ models, runs, onExecuteComparison }: { models: EngineModel[]; runs: RuntimeRun[]; onExecuteComparison: (payload: ComparisonPayload) => Promise<ComparisonResult> }) {
+  const initialBaseline = runs.find((run) => run.executionMode === 'RIGID_MAPPING_BASELINE')?.id ?? runs[1]?.id ?? ''
+  const initialFlexible = runs.find((run) => run.executionMode === 'FLEXIBLE_ENGINE' && run.comparisonId)?.id ?? runs[0]?.id ?? ''
+  const [baselineId, setBaselineId] = useState(initialBaseline)
+  const [flexibleId, setFlexibleId] = useState(initialFlexible)
   const [baseline, setBaseline] = useState<LoadedRun | null>(null)
   const [flexible, setFlexible] = useState<LoadedRun | null>(null)
   const [loading, setLoading] = useState(false)
@@ -75,8 +79,8 @@ export function ComparisonView({ models, runs }: { models: EngineModel[]; runs: 
 
   useEffect(() => {
     if (runs.length === 0) return
-    if (!runs.some((run) => run.id === baselineId)) setBaselineId(runs[1]?.id ?? runs[0].id)
-    if (!runs.some((run) => run.id === flexibleId)) setFlexibleId(runs[0].id)
+    if (!runs.some((run) => run.id === baselineId)) setBaselineId(runs.find((run) => run.executionMode === 'RIGID_MAPPING_BASELINE')?.id ?? runs[1]?.id ?? runs[0].id)
+    if (!runs.some((run) => run.id === flexibleId)) setFlexibleId(runs.find((run) => run.executionMode === 'FLEXIBLE_ENGINE' && run.comparisonId)?.id ?? runs[0].id)
   }, [runs, baselineId, flexibleId])
 
   useEffect(() => {
@@ -95,23 +99,65 @@ export function ComparisonView({ models, runs }: { models: EngineModel[]; runs: 
     return () => { active = false }
   }, [baselineId, flexibleId])
 
-  const paired = Boolean(baseline && flexible && baseline.run.modelId === flexible.run.modelId && stableValue(baseline.run.inputValues) === stableValue(flexible.run.inputValues) && baseline.run.event === flexible.run.event)
+  const sameInput = Boolean(baseline && flexible && baseline.run.inputSha256 && flexible.run.inputSha256
+    ? baseline.run.inputSha256 === flexible.run.inputSha256
+    : baseline && flexible && stableValue(baseline.run.inputValues) === stableValue(flexible.run.inputValues))
+  const paired = Boolean(baseline && flexible && baseline.run.modelId === flexible.run.modelId && sameInput && baseline.run.event === flexible.run.event)
+  const formalPair = Boolean(paired && baseline && flexible && baseline.run.executionMode === 'RIGID_MAPPING_BASELINE'
+    && flexible.run.executionMode === 'FLEXIBLE_ENGINE'
+    && baseline.run.comparisonId && baseline.run.comparisonId === flexible.run.comparisonId
+    && baseline.run.pairedRunId === flexible.run.id && flexible.run.pairedRunId === baseline.run.id)
   const modelName = models.find((model) => model.id === flexible?.run.modelId)?.name ?? flexible?.run.modelId ?? '—'
 
   return <>
-    <PageIntro eyebrow="COMPARISON / PAIRED RUNS" title="成对运行对比" description="选择两次真实持久化 Run，检查同一输入下的结果、调用链、证据完整度和本体身份。固定基线执行器尚未接入，因此页面不会把同一引擎的两次运行冒充成 Before / After 提升。" action={<span className="identity-badge live">REAL RUN EVIDENCE</span>} />
-    <section className="panel comparison-selector"><div><PanelHeading kicker="PAIR CONFIGURATION" title="选择对比运行" /><p className="panel-description">Run A 和 Run B 必须来自相同模型、事件和输入；如果条件不同，结果会被标记为不可直接比较。当前两侧均读取 Engine API 的真实运行记录。</p></div><div className="comparison-selects"><label>Run A · 参照记录<select value={baselineId} onChange={(event) => setBaselineId(event.target.value)}><option value="">选择 Run</option>{runs.map((run) => <option value={run.id} key={run.id}>{run.id} · {run.status}</option>)}</select></label><span className="comparison-arrow">→</span><label>Run B · 待比较记录<select value={flexibleId} onChange={(event) => setFlexibleId(event.target.value)}><option value="">选择 Run</option>{runs.map((run) => <option value={run.id} key={run.id}>{run.id} · {run.status}</option>)}</select></label></div></section>
+    <PageIntro eyebrow="COMPARISON / BASELINE × FLEXIBLE" title="成对运行对比" description="由同一输入哈希约束的固定映射基线与 Flexible Engine 成对运行，展示状态结果、调用链、证据完整度、配置身份和真实知识图谱。" action={<span className="identity-badge live">REAL RUN EVIDENCE</span>} />
+    <section className="panel comparison-selector"><div><PanelHeading kicker="PAIR CONFIGURATION" title="执行或选择对比运行" /><p className="panel-description">推荐先执行一组新的正式对比。系统会分别创建固定基线和 Flexible Engine Run，并将 comparisonId、输入哈希、配置哈希和彼此 Run ID 写入持久化证据。</p><ComparisonLauncher models={models} onExecute={onExecuteComparison} onSelected={(result) => { setBaselineId(result.baselineRun.id); setFlexibleId(result.flexibleRun.id) }} /></div><div className="comparison-selects"><label>{formalPair ? '固定映射基线' : 'Run A · 参照记录'}<select value={baselineId} onChange={(event) => setBaselineId(event.target.value)}><option value="">选择 Run</option>{runs.map((run) => <option value={run.id} key={run.id}>{run.id} · {run.executionMode === 'RIGID_MAPPING_BASELINE' ? 'BASELINE' : run.status}</option>)}</select></label><span className="comparison-arrow">→</span><label>{formalPair ? 'Flexible Engine' : 'Run B · 待比较记录'}<select value={flexibleId} onChange={(event) => setFlexibleId(event.target.value)}><option value="">选择 Run</option>{runs.map((run) => <option value={run.id} key={run.id}>{run.id} · {run.executionMode === 'FLEXIBLE_ENGINE' ? 'FLEXIBLE' : run.status}</option>)}</select></label></div></section>
     {error && <div className="error-list comparison-error">! {error}</div>}
     {loading && <div className="panel comparison-loading"><span className="state-mark spinning">↻</span><strong>正在读取两次运行的证据…</strong></div>}
     {!loading && (!baseline || !flexible) && <section className="panel"><EmptyState title="选择两次不同的真实运行" description="当前页面只读取后端 Run、Trace 和 Snapshot，不生成虚假的 Before/After 结果。" /></section>}
     {!loading && baseline && flexible && <>
-      <section className={`comparison-verdict ${paired ? 'is-paired' : 'is-unpaired'}`}><div><span className="panel-kicker">COMPARABILITY</span><strong>{paired ? '输入条件一致，可以进行成对观察' : '输入条件不一致，不能直接解释为提升'}</strong><p>{paired ? `当前比较模型：${modelName} · 事件：${flexible.run.event || 'none'} · 输入值和执行条件来自两个 Run 的持久化记录。` : '请重新选择相同模型、事件和 inputValues 的两次运行，或将本次结果仅作为工程观察。'}</p></div><span className="comparison-badge">{paired ? 'PAIRED OBSERVATION' : 'UNPAIRED'}</span></section>
-      {paired && <div className="comparison-disclosure"><strong>当前对照边界</strong><span>两侧均为柔性引擎真实 Run；固定映射 baseline 尚未接入。这里的耗时和状态差异是成对运行观察，不是系统提升结论。</span></div>}
-      <section className="comparison-metric-grid"><CompareMetric label="执行状态" before={humanStatus(baseline.run.status)} after={humanStatus(flexible.run.status)} tone={flexible.run.status === 'PASSED' ? 'positive' : 'negative'} /><CompareMetric label="最终状态" before={baseline.run.toState} after={flexible.run.toState} /><CompareMetric label="端到端耗时" before={`${baseline.run.durationMs} ms`} after={`${flexible.run.durationMs} ms`} note={durationDelta(baseline.run.durationMs, flexible.run.durationMs)} /><CompareMetric label="Trace Span" before={String(baseline.trace?.spans.length ?? baseline.run.trace?.spans.length ?? 0)} after={String(flexible.trace?.spans.length ?? flexible.run.trace?.spans.length ?? 0)} note="来自真实 Trace" /><CompareMetric label="Snapshot" before={String(baseline.snapshots.length)} after={String(flexible.snapshots.length)} note="Run A / Run B 结构" /><CompareMetric label="本体身份" before={ontologyIdentity(baseline.run)} after={ontologyIdentity(flexible.run)} note="version + hash" /></section>
+      <section className={`comparison-verdict ${paired ? 'is-paired' : 'is-unpaired'}`}><div><span className="panel-kicker">COMPARABILITY</span><strong>{paired ? (formalPair ? '正式基线配对已建立，可以报告实现内对比' : '输入条件一致，可以进行成对观察') : '输入条件不一致，不能直接解释为提升'}</strong><p>{paired ? `当前比较模型：${modelName} · 事件：${flexible.run.event || 'none'} · 输入哈希、状态和 Trace 来自两个持久化 Run。` : '请重新选择相同模型、事件和输入哈希的两次运行，或将本次结果仅作为工程观察。'}</p></div><span className="comparison-badge">{formalPair ? 'BASELINE / FLEXIBLE' : paired ? 'PAIRED OBSERVATION' : 'UNPAIRED'}</span></section>
+      {paired && <div className="comparison-disclosure"><strong>当前对照边界</strong><span>{formalPair ? '固定映射基线仅代表仓库内 RigidMappingBaseline v1；Flexible Engine 为当前配置运行。耗时是本机本地实现的原始观测，不是原生产系统性能或业务提升。' : '当前不是正式固定映射基线配对；这里的耗时和状态差异是成对运行观察，不是系统提升结论。'}</span></div>}
+      <section className="comparison-metric-grid"><CompareMetric label="执行状态" before={humanStatus(baseline.run.status)} after={humanStatus(flexible.run.status)} tone={flexible.run.status === 'PASSED' ? 'positive' : 'negative'} /><CompareMetric label="最终状态" before={baseline.run.toState} after={flexible.run.toState} /><CompareMetric label="端到端耗时" before={formatDuration(baseline.run.durationNs, baseline.run.durationMs)} after={formatDuration(flexible.run.durationNs, flexible.run.durationMs)} note={durationDelta(baseline.run.durationNs, flexible.run.durationNs, baseline.run.durationMs, flexible.run.durationMs)} /><CompareMetric label="Trace Span" before={String(baseline.trace?.spans.length ?? baseline.run.trace?.spans.length ?? 0)} after={String(flexible.trace?.spans.length ?? flexible.run.trace?.spans.length ?? 0)} note="来自真实 Trace" /><CompareMetric label="Snapshot" before={String(baseline.snapshots.length)} after={String(flexible.snapshots.length)} note="Run A / Run B 结构" /><CompareMetric label="本体身份" before={ontologyIdentity(baseline.run)} after={ontologyIdentity(flexible.run)} note="version + hash" /></section>
       <section className="panel comparison-panel"><PanelHeading kicker="EXECUTION CHAIN / SIDE BY SIDE" title="调用链对比" /><CallChainComparison baseline={baseline} flexible={flexible} /></section>
       <section className="comparison-two-column"><section className="panel"><PanelHeading kicker="DECISION EVIDENCE" title="结构化决策证据" /><DecisionEvidence run={flexible.run} /></section><section className="panel"><PanelHeading kicker="KNOWLEDGE GRAPH / RUN B" title="待比较运行图谱" /><MiniGraph run={flexible.run} /></section></section>
     </>}
   </>
+}
+
+function ComparisonLauncher({ models, onExecute, onSelected }: { models: EngineModel[]; onExecute: (payload: ComparisonPayload) => Promise<ComparisonResult>; onSelected: (result: ComparisonResult) => void }) {
+  const defaultModel = models.find((model) => model.id === 'questionnaire') ?? models[0]
+  const [modelId, setModelId] = useState(defaultModel?.id ?? '')
+  const currentModel = models.find((model) => model.id === modelId) ?? defaultModel
+  const [caseId, setCaseId] = useState('manual-questionnaire')
+  const [event, setEvent] = useState(currentModel?.transitions[0]?.event ?? '')
+  const [input, setInput] = useState(JSON.stringify(comparisonSample(currentModel), null, 2))
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState('')
+
+  function changeModel(nextId: string) {
+    const nextModel = models.find((model) => model.id === nextId) ?? defaultModel
+    setModelId(nextId)
+    setEvent(nextModel?.transitions[0]?.event ?? '')
+    setInput(JSON.stringify(comparisonSample(nextModel), null, 2))
+  }
+
+  async function submit(formEvent: FormEvent) {
+    formEvent.preventDefault()
+    if (!modelId || !event) return
+    try {
+      setRunning(true)
+      setError('')
+      const result = await onExecute({ modelId, event, caseId: caseId.trim() || 'manual-comparison', values: JSON.parse(input) as Record<string, unknown> })
+      onSelected(result)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '对比输入无法执行')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return <div className="comparison-launcher"><div className="launcher-heading"><strong>创建正式配对</strong><span>同一输入 · 两个执行器 · 两份 Trace</span></div><form onSubmit={submit} className="launcher-form"><label>案例 ID<input value={caseId} onChange={(event) => setCaseId(event.target.value)} placeholder="questionnaire-dynamic-field" /></label><label>模型<select value={modelId} onChange={(event) => changeModel(event.target.value)}>{models.map((model) => <option value={model.id} key={model.id}>{model.name} · {model.id}</option>)}</select></label><label>事件<select value={event} onChange={(formEvent) => setEvent(formEvent.target.value)}>{currentModel?.transitions.map((transition) => <option value={transition.event} key={transition.event}>{transition.event}</option>)}</select></label><label className="launcher-json">同一输入 JSON<textarea value={input} onChange={(formEvent) => setInput(formEvent.target.value)} spellCheck={false} /></label><button type="submit" className="primary-button" disabled={running}>{running ? '成对执行中…' : '执行基线 + Flexible Engine'}</button></form>{error && <div className="error-list">! {error}</div>}<small className="launcher-note">输入 JSON 会原样进入两侧；若要观察柔性适应能力，可在 Schema 中新增字段后重新执行。</small></div>
 }
 
 function PageIntro({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) {
@@ -137,7 +183,7 @@ function CompareMetric({ label, before, after, note, tone }: { label: string; be
 function CallChainComparison({ baseline, flexible }: { baseline: LoadedRun; flexible: LoadedRun }) {
   const beforeSpans = baseline.trace?.spans ?? baseline.run.trace?.spans ?? []
   const afterSpans = flexible.trace?.spans ?? flexible.run.trace?.spans ?? []
-  const maxDuration = Math.max(1, ...beforeSpans.map((span) => span.durationMs), ...afterSpans.map((span) => span.durationMs))
+  const maxDuration = Math.max(1, ...beforeSpans.map(spanDurationNs), ...afterSpans.map(spanDurationNs))
   const names = Array.from(new Set([...beforeSpans.map((span) => span.name), ...afterSpans.map((span) => span.name)]))
   if (names.length === 0) return <EmptyState title="没有可用 Span" description="本次运行没有返回 Trace Span，不能绘制调用链。" />
   return <div className="call-chain-table"><div className="call-chain-head"><span>阶段</span><span>Run A / 参照记录</span><span>Run B / 待比较记录</span></div>{names.map((name) => { const before = beforeSpans.find((span) => span.name === name); const after = afterSpans.find((span) => span.name === name); return <div className="call-chain-row" key={name}><strong>{name}</strong><SpanBar span={before} maxDuration={maxDuration} /><SpanBar span={after} maxDuration={maxDuration} /></div> })}</div>
@@ -145,8 +191,9 @@ function CallChainComparison({ baseline, flexible }: { baseline: LoadedRun; flex
 
 function SpanBar({ span, maxDuration }: { span?: TraceSpan; maxDuration: number }) {
   if (!span) return <div className="span-bar missing"><span>未出现</span></div>
-  const width = Math.max(7, Math.min(100, (span.durationMs / maxDuration) * 100))
-  return <div className={`span-bar ${span.status.toLowerCase()}`}><div style={{ width: `${width}%` }} /><span>{span.status} · {span.durationMs} ms</span></div>
+  const durationNs = spanDurationNs(span)
+  const width = Math.max(7, Math.min(100, (durationNs / maxDuration) * 100))
+  return <div className={`span-bar ${span.status.toLowerCase()}`}><div style={{ width: `${width}%` }} /><span>{span.status} · {formatDuration(span.durationNs, span.durationMs)}</span></div>
 }
 
 function DecisionEvidence({ run }: { run: RuntimeRun }) {
@@ -157,6 +204,10 @@ function DecisionEvidence({ run }: { run: RuntimeRun }) {
   const workflow = spans.find((span) => span.name === 'workflow')
   const facts = [
     ['输入模型', run.modelId],
+    ['执行模式', run.executionMode ?? 'FLEXIBLE_ENGINE'],
+    ['comparisonId', run.comparisonId ?? '非对比运行'],
+    ['输入 hash', shortHash(run.inputSha256)],
+    ['配置 hash', shortHash(run.configurationSha256)],
     ['显式本体绑定', run.ontologyTypeId ?? '未绑定'],
     ['本体版本', String(run.ontologyVersion ?? '—')],
     ['定义 hash', shortHash(run.ontologyDefinitionSha256)],
@@ -236,12 +287,35 @@ function ontologyIdentity(run: RuntimeRun) {
   return run.ontologyTypeId ? `${run.ontologyTypeId} · v${run.ontologyVersion ?? '—'}` : '未绑定'
 }
 
-function durationDelta(before: number, after: number) {
-  const delta = after - before
-  return `${delta > 0 ? '+' : ''}${delta} ms · 原始观测`
+function spanDurationNs(span: TraceSpan) {
+  return span.durationNs && span.durationNs > 0 ? span.durationNs : Math.max(0, span.durationMs) * 1000000
+}
+
+function formatDuration(durationNs?: number, durationMs?: number) {
+  const nanos = durationNs && durationNs > 0 ? durationNs : Math.max(0, durationMs ?? 0) * 1000000
+  if (nanos <= 0) return 'N/A'
+  if (nanos < 1000) return `${nanos} ns`
+  if (nanos < 1000000) return `${(nanos / 1000).toFixed(1)} μs`
+  return `${(nanos / 1000000).toFixed(2)} ms`
+}
+
+function durationDelta(beforeNs?: number, afterNs?: number, beforeMs = 0, afterMs = 0) {
+  const delta = (afterNs && afterNs > 0 ? afterNs : afterMs * 1000000) - (beforeNs && beforeNs > 0 ? beforeNs : beforeMs * 1000000)
+  return `${delta > 0 ? '+' : ''}${formatSignedDuration(delta)} · 原始观测`
+}
+
+function formatSignedDuration(durationNs: number) {
+  if (durationNs === 0) return '0 ns'
+  const sign = durationNs < 0 ? '-' : ''
+  return `${sign}${formatDuration(Math.abs(durationNs))}`
 }
 
 function shortHash(value?: string | null) {
   if (!value) return '—'
   return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value
+}
+
+function comparisonSample(model?: EngineModel) {
+  if (model?.id === 'interview-session') return { candidateName: '对比样例', score: 95 }
+  return { name: '对比样例', subjectId: 'subject-001' }
 }

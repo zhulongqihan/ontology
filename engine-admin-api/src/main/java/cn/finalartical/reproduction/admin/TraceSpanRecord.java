@@ -9,6 +9,7 @@ public class TraceSpanRecord {
     private String name;
     private String startedAt;
     private String endedAt;
+    private long durationNs;
     private long durationMs;
     private String status;
     private Map<String, String> attributes = new LinkedHashMap<String, String>();
@@ -42,6 +43,8 @@ public class TraceSpanRecord {
     public void setEndedAt(String endedAt) { this.endedAt = endedAt; }
     public long getDurationMs() { return durationMs; }
     public void setDurationMs(long durationMs) { this.durationMs = durationMs; }
+    public long getDurationNs() { return durationNs; }
+    public void setDurationNs(long durationNs) { this.durationNs = Math.max(0L, durationNs); }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Map<String, String> getAttributes() { return attributes; }

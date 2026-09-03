@@ -49,7 +49,7 @@ Provider / Consumer 兼容调用
 - 契约回归：20 条接口契约规格、逐用例结果、由真实 Provider 调用测量生成的封存 Trace、报告和哈希输出。
 - 架构边界：管理读取结果全部深拷贝；关系和服务状态只能通过受控、审计化命令更新，避免 DTO 嵌套对象绕过版本和持久化。
 - HTTP 并发与错误协议：响应返回 `ETag` 和 `X-Trace-Id`，条件写入支持 `If-Match`；错误统一包含 `errorCode`、`message` 和 `traceId`。
-- 持久化完整性：SQLite 加载前校验 Schema/Workflow 版本链、字段版本、迁移字段、Run/Trace、Snapshot/Context 关联；schema 12 保存模型/运行本体绑定、Ontology version/hash 和 Trace 生命周期，写入采用 `BEGIN IMMEDIATE`，不接受坏投影并回写兼容 JSON。
+- 持久化完整性：SQLite 加载前校验 Schema/Workflow 版本链、字段版本、迁移字段、Run/Trace、Snapshot/Context 关联；schema 14 还保存模型/运行本体绑定、Ontology version/hash、Trace 生命周期、高分辨率耗时和 baseline/flexible 成对执行身份，写入采用 `BEGIN IMMEDIATE`，不接受坏投影并回写兼容 JSON。
 - 审计链：配置和回滚审计事件携带 `beforeRevision/afterRevision` 以及结构化 `changes[{path,beforeValue,afterValue}]`，SQLite v8 校验差异 JSON 可加载；revision 表示写入归属，changes 表示字段内容差异。
 - 复现实验：A 机制对照、B 故障注入、C 重复性/消融；报告保存 data identity、source revision、seed 和结果摘要。
 
@@ -135,7 +135,7 @@ npm.cmd run dev
 
 控制面中的新增模型、动态字段、状态转换、本体关系、服务注册和运行快照都会进入本地引擎状态，而不是只改变浏览器内存。SQLite 写入在事务中完成，并保留状态写入审计记录；旧 JSON 只作为迁移入口，不再是默认运行仓库。
 
-控制面首页按“定义模型 → 绑定本体 → 真实运行 → 复核证据”组织操作。知识图谱页面区分注册的本体定义和真实 Run 的 `ontologyGraph`；成对运行页面读取两个真实 Run 的持久化证据并检查输入条件是否一致。当前后端尚未接入可执行的 `Rigid Mapping Baseline`，因此该页面显示为 `PAIRED OBSERVATION`，不能把同一柔性引擎的两次运行写成 Before/After 提升。
+控制面首页按“定义模型 → 绑定本体 → 真实运行 → 复核证据”组织操作。知识图谱页面区分注册的本体定义和真实 Run 的 `ontologyGraph`；成对运行页面通过 `POST /api/comparisons/execute` 创建独立 `RigidMappingBaseline` 与 Flexible Engine Run，读取持久化证据并检查输入条件是否一致。页面明确显示固定基线边界，不把该实现内对比写成原生产系统 Before/After 提升。
 
 ## 管理 API
 
@@ -197,14 +197,14 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：84/84 通过。
+- Maven 多模块测试：89/89 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
 - `experiments` 模式：A/B/C 机制、故障注入、重复性和消融实验可执行；3 个 seed 各 20/20 通过。
 - SQLite 跨实例并发：一个写入者成功，另一个得到 revision conflict；重载后相同幂等请求返回已提交 Run。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
 - 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行、快照/Trace/审计/幂等查询、重试回滚、SQLite 持久化和旧 JSON 迁移已完成实测。
-- 架构回归：84 个 Maven 测试通过；包含显式绑定、Ontology version/hash、双向基数、公开对象深拷贝、嵌套输入隔离、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match/CORS 预检、审计 revision 链、SQLite 事务、跨实例冲突、坏投影拒绝、坏 Snapshot/Trace 拒绝、历史 legacy 运行保留、重启后幂等和隔离 Replay。详见 [当前审查状态 v0.7](docs/审查状态_v0.7.md)。
+- 架构回归：89 个 Maven 测试通过；包含显式绑定、Ontology version/hash、双向基数、公开对象深拷贝、嵌套输入隔离、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match/CORS 预检、审计 revision 链、SQLite 事务、跨实例冲突、坏投影拒绝、坏 Snapshot/Trace 拒绝、历史 legacy 运行保留、重启后幂等和隔离 Replay，以及固定映射基线与 Flexible Engine 的成对执行身份、高分辨率耗时恢复和成对事务回滚。详见 [当前审查状态 v0.7](docs/审查状态_v0.7.md)。
 
 ## 论文与系统边界
 
@@ -225,7 +225,7 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 - 跨类型转换、Schema 版本回滚和更细粒度的兼容策略。
 - 更细粒度的重试策略配置、远程 Provider 超时与跨部署环境的并发恢复。
 - 跨进程/跨服务的请求—响应—Provider 调用链；当前已完成本地 in-process Provider 的真实观测，不能把它等同于生产网络调用链。
-- 可执行的 `Rigid Mapping Baseline` 和成对实验元数据；当前成对运行页面只提供真实 Run 的条件检查与证据观察，不自动生成基线结果。
+- 可执行的 `RigidMappingBaseline` 和成对实验元数据；成对运行页面可真实执行两侧 Run，并展示调用链、状态、配置/输入 hash 和图谱来源，同时保留“非原生产系统基线”的边界说明。
 - 本体关系装配的更多跨类型、跨服务和兼容场景。
 - 将知识图谱、调用链和结构化决策证据导出升级为带格式版本的论文实验支撑层，并与引擎领域数据保持清晰边界。
 

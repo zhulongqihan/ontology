@@ -18,6 +18,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -28,6 +29,96 @@ import static org.junit.Assert.fail;
 import static org.junit.Assert.assertTrue;
 
 public class SqliteEngineStateRepositoryTest {
+    @Test
+    public void persistsBaselineFlexiblePairMetadataAndHighResolutionTiming() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-comparison");
+        Path database = directory.resolve("engine.db");
+        EngineAdminService service = new EngineAdminService(new SqliteEngineStateRepository(database));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("comparisonId", "cmp-sqlite-001");
+        payload.put("caseId", "questionnaire-basic");
+        payload.put("modelId", "questionnaire");
+        payload.put("event", "publish");
+        payload.put("values", new LinkedHashMap<String, Object>() {{
+            put("name", "SQLite 对比"); put("subjectId", "s-001");
+        }});
+
+        Map<String, Object> result = service.executeComparison(payload);
+        RuntimeRun baseline = (RuntimeRun) result.get("baselineRun");
+        RuntimeRun flexible = (RuntimeRun) result.get("flexibleRun");
+        assertEquals("RIGID_MAPPING_BASELINE", baseline.getExecutionMode());
+        assertEquals("FLEXIBLE_ENGINE", flexible.getExecutionMode());
+        assertEquals(flexible.getId(), baseline.getPairedRunId());
+        assertEquals(baseline.getInputSha256(), flexible.getInputSha256());
+        assertTrue(baseline.getDurationNs() > 0);
+        assertTrue(flexible.getDurationNs() > 0);
+
+        EngineAdminService reloaded = new EngineAdminService(new SqliteEngineStateRepository(database));
+        RuntimeRun restoredBaseline = reloaded.run(baseline.getId());
+        RuntimeRun restoredFlexible = reloaded.run(flexible.getId());
+        assertEquals("cmp-sqlite-001", restoredBaseline.getComparisonId());
+        assertEquals(flexible.getId(), restoredBaseline.getPairedRunId());
+        assertEquals(baseline.getId(), restoredFlexible.getPairedRunId());
+        assertTrue(restoredBaseline.getTrace().getDurationNs() > 0);
+        assertTrue(restoredFlexible.getTrace().getSpans().get(0).getDurationNs() > 0);
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             PreparedStatement query = connection.prepareStatement(
+                     "SELECT execution_mode, comparison_id, paired_run_id, input_sha256, duration_ns "
+                             + "FROM runtime_run WHERE run_id = ?")) {
+            query.setString(1, baseline.getId());
+            try (ResultSet rows = query.executeQuery()) {
+                assertTrue(rows.next());
+                assertEquals("RIGID_MAPPING_BASELINE", rows.getString(1));
+                assertEquals("cmp-sqlite-001", rows.getString(2));
+                assertEquals(flexible.getId(), rows.getString(3));
+                assertEquals(baseline.getInputSha256(), rows.getString(4));
+                assertTrue(rows.getLong(5) > 0);
+            }
+        }
+    }
+
+    @Test
+    public void comparisonProjectionFailureRollsBackBothRunsWithoutLeavingAnIncompletePair() throws Exception {
+        Path directory = Files.createTempDirectory("engine-sqlite-comparison-rollback");
+        Path database = directory.resolve("engine.db");
+        AtomicBoolean failOnce = new AtomicBoolean(false);
+        SqliteEngineStateRepository repository = new SqliteEngineStateRepository(database, null,
+                new SqliteEngineStateRepository.FailureInjector() {
+                    @Override
+                    public void after(String step) {
+                        if ("runtime_projection".equals(step) && failOnce.getAndSet(false)) {
+                            throw new IllegalStateException("injected comparison projection failure");
+                        }
+                    }
+        });
+        EngineAdminService service = new EngineAdminService(repository);
+        failOnce.set(true);
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("comparisonId", "cmp-sqlite-rollback");
+        payload.put("caseId", "questionnaire-basic");
+        payload.put("modelId", "questionnaire");
+        payload.put("event", "publish");
+        payload.put("values", new LinkedHashMap<String, Object>() {{
+            put("name", "rollback"); put("subjectId", "s-rollback");
+        }});
+
+        try {
+            service.executeComparison(payload);
+            fail("injected comparison projection failure must abort the comparison");
+        } catch (IllegalStateException exception) {
+            assertTrue(exception.getMessage().contains("injected comparison projection failure"));
+        }
+
+        EngineAdminService reloaded = new EngineAdminService(new SqliteEngineStateRepository(database));
+        assertTrue(reloaded.runs().isEmpty());
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             ResultSet rows = connection.createStatement().executeQuery(
+                     "SELECT count(*) FROM runtime_run WHERE comparison_id = 'cmp-sqlite-rollback'")) {
+            assertTrue(rows.next());
+            assertEquals(0, rows.getInt(1));
+        }
+    }
+
     @Test
     public void persistsEngineStateAcrossRepositoryReload() throws Exception {
         Path directory = Files.createTempDirectory("engine-sqlite");
@@ -52,7 +143,7 @@ public class SqliteEngineStateRepositoryTest {
                      "SELECT (SELECT max(version) FROM schema_version), (SELECT count(*) FROM engine_model), " +
                              "(SELECT count(*) FROM schema_field WHERE field_name = 'confidence')")) {
             assertTrue(result.next());
-            assertEquals(12, result.getInt(1));
+            assertEquals(14, result.getInt(1));
             assertEquals(2, result.getInt(2));
             assertTrue(result.getInt(3) >= 1);
         }
@@ -336,6 +427,11 @@ public class SqliteEngineStateRepositoryTest {
         assertEquals(written.getAfterSnapshot().getSha256(), restored.getAfterSnapshot().getSha256());
         assertEquals(7, restored.getTrace().getSpans().size());
         assertEquals("normalized", restored.getTrace().getSpans().get(0).getAttributes().get("source"));
+        assertTrue(written.getDurationNs() > 0);
+        assertTrue(written.getTrace().getDurationNs() > 0);
+        assertTrue(restored.getDurationNs() > 0);
+        assertTrue(restored.getTrace().getDurationNs() > 0);
+        assertTrue(restored.getTrace().getSpans().get(0).getDurationNs() > 0);
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT count(*) FROM runtime_run), (SELECT count(*) FROM execution_snapshot), (SELECT count(*) FROM trace_span), (SELECT count(*) FROM idempotency_record)")) {
@@ -349,7 +445,7 @@ public class SqliteEngineStateRepositoryTest {
              ResultSet result = connection.createStatement().executeQuery(
                      "SELECT (SELECT max(version) FROM schema_version), input_values_json, attempt, retry_of_run_id FROM runtime_run WHERE run_id = '" + written.getId() + "'")) {
             assertTrue(result.next());
-            assertEquals(12, result.getInt(1));
+            assertEquals(14, result.getInt(1));
             assertTrue(result.getString(2).contains("重启恢复"));
             assertEquals(1, result.getInt(3));
             assertEquals(null, result.getString(4));

@@ -209,6 +209,18 @@ code, .eyebrow, .panel-kicker, .source-kicker, .version-badge, .type-badge, .req
 .comparison-selector { display: grid; grid-template-columns: minmax(0, 1fr) minmax(370px, .9fr); gap: 22px; align-items: end; padding: 2px 21px 20px; }
 .comparison-selector .panel-heading { padding: 17px 0 0; }
 .panel-description { max-width: 68ch; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.comparison-launcher { margin-top: 15px; padding: 13px 14px 14px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.launcher-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.launcher-heading strong { color: var(--ink); font-size: 11px; }
+.launcher-heading span, .launcher-note { color: var(--muted); font: 9px/1.4 "SFMono-Regular", Consolas, monospace; }
+.launcher-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 9px; margin-top: 10px; }
+.launcher-form label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; }
+.launcher-form input, .launcher-form select, .launcher-form textarea { width: 100%; padding: 8px 9px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); font-size: 10px; }
+.launcher-form textarea { min-height: 92px; resize: vertical; font: 10px/1.45 "SFMono-Regular", Consolas, monospace; }
+.launcher-json { grid-column: 1 / -1; }
+.launcher-form .primary-button { grid-column: 1 / -1; justify-self: start; }
+.comparison-launcher .error-list { margin-top: 9px; }
+.launcher-note { display: block; margin-top: 9px; }
 .comparison-selects { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: end; }
 .comparison-selects label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); font-size: 10px; }
 .comparison-selects select { min-width: 0; padding: 9px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); font-size: 10px; }
@@ -259,4 +271,4 @@ code, .eyebrow, .panel-kicker, .source-kicker, .version-badge, .type-badge, .req
 .mini-graph-wrap .graph-note { display: block; margin: 10px 0 0; }
 
 @media (max-width: 1080px) { .control-journey { grid-template-columns: 1fr; }.journey-intro p { max-width: 65ch; }.comparison-selector { grid-template-columns: 1fr; }.comparison-two-column { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { .journey-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }.journey-step { min-height: 96px; }.inline-select { width: 100%; align-items: flex-start; flex-direction: column; }.inline-select select { width: 100%; }.graph-canvas-wrap { padding-left: 12px; padding-right: 12px; }.graph-legend { padding-left: 15px; padding-right: 15px; }.graph-note { width: 100%; margin-left: 0; }.graph-detail-grid { grid-template-columns: 1fr; }.comparison-selector { padding-left: 15px; padding-right: 15px; }.comparison-selects { grid-template-columns: 1fr; }.comparison-arrow { display: none; }.comparison-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.comparison-verdict { align-items: flex-start; flex-direction: column; }.call-chain-head, .call-chain-row { padding-left: 15px; padding-right: 15px; }.decision-row { grid-template-columns: 100px minmax(0, 1fr); } }
+@media (max-width: 760px) { .journey-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }.journey-step { min-height: 96px; }.inline-select { width: 100%; align-items: flex-start; flex-direction: column; }.inline-select select { width: 100%; }.graph-canvas-wrap { padding-left: 12px; padding-right: 12px; }.graph-legend { padding-left: 15px; padding-right: 15px; }.graph-note { width: 100%; margin-left: 0; }.graph-detail-grid { grid-template-columns: 1fr; }.comparison-selector { padding-left: 15px; padding-right: 15px; }.comparison-selects { grid-template-columns: 1fr; }.comparison-arrow { display: none; }.launcher-form { grid-template-columns: 1fr; }.launcher-json, .launcher-form .primary-button { grid-column: auto; }.comparison-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.comparison-verdict { align-items: flex-start; flex-direction: column; }.call-chain-head, .call-chain-row { padding-left: 15px; padding-right: 15px; }.decision-row { grid-template-columns: 100px minmax(0, 1fr); } }

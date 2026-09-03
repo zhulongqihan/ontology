@@ -38,7 +38,18 @@ final class EngineRuntimeService {
     }
 
     synchronized RuntimeRun execute(Map<String, Object> payload) {
+        return executeInternal(payload, false);
+    }
+
+    private RuntimeRun executeInternal(Map<String, Object> payload, boolean deferPersistence) {
         long startedAt = System.nanoTime();
+        String executionMode = textValue(payload == null ? null : payload.get("executionMode"), "FLEXIBLE_ENGINE").trim();
+        if (RigidMappingBaseline.MODE.equals(executionMode)) {
+            return executeRigidBaseline(payload, deferPersistence);
+        }
+        if (!"FLEXIBLE_ENGINE".equals(executionMode)) {
+            throw new IllegalArgumentException("unsupported executionMode: " + executionMode);
+        }
         String modelId = requiredText(payload, "modelId");
         EngineModel model = model(modelId);
         Map<String, Object> inputValues = mapValue(payload == null ? null : payload.get("values"));
@@ -47,6 +58,8 @@ final class EngineRuntimeService {
         if (contextId.isEmpty()) {
             contextId = "ctx-" + UUID.randomUUID().toString().substring(0, 8);
         }
+        String comparisonId = textValue(payload == null ? null : payload.get("comparisonId"), "").trim();
+        String caseId = textValue(payload == null ? null : payload.get("caseId"), "").trim();
         String idempotencyKey = textValue(payload == null ? null : payload.get("idempotencyKey"), "").trim();
         String retryOfRunId = textValue(payload == null ? null : payload.get("retryOfRunId"), "").trim();
         String replayOfRunId = textValue(payload == null ? null : payload.get("replayOfRunId"), "").trim();
@@ -247,6 +260,12 @@ final class EngineRuntimeService {
         RuntimeRun run = new RuntimeRun();
         run.setId(runId);
         run.setModelId(modelId);
+        run.setExecutionMode("FLEXIBLE_ENGINE");
+        run.setComparisonId(comparisonId.isEmpty() ? null : comparisonId);
+        run.setCaseId(caseId.isEmpty() ? null : caseId);
+        run.setInputSha256(comparisonInputSha256(modelId, event, inputValues, ontologyInput));
+        run.setConfigurationSha256(flexibleConfigurationSha256(model, boundOntologyVersion,
+                boundOntologyDefinitionSha256));
         run.setOntologyTypeId(boundOntologyTypeId);
         run.setOntologyVersion(boundOntologyVersion);
         run.setOntologyDefinitionSha256(boundOntologyDefinitionSha256);
@@ -309,11 +328,16 @@ final class EngineRuntimeService {
         long responseStarted = System.nanoTime();
         addSpan(spans, traceId, "response", responseStarted, "PREPARED",
                 mapOf("deliveryBoundary", "caller-observation"));
-        long durationMs = Math.max(1L, (System.nanoTime() - startedAt) / 1000000L);
+        long durationNs = Math.max(0L, System.nanoTime() - startedAt);
+        long durationMs = Math.max(1L, durationNs / 1000000L);
+        run.setDurationNs(durationNs);
         run.setDurationMs(durationMs);
-        TraceRecord trace = trace(run, startedAtIso, spans, status, durationMs);
+        TraceRecord trace = trace(run, startedAtIso, spans, status, durationNs, durationMs);
         run.setTrace(trace);
 
+        if (deferPersistence) {
+            return run;
+        }
         try {
             state.setUpdatedAt(Instant.now().toString());
             repository.save(state, state.getRevision());
@@ -343,6 +367,270 @@ final class EngineRuntimeService {
         return run;
     }
 
+    synchronized Map<String, Object> executeComparison(Map<String, Object> payload) {
+        String modelId = requiredText(payload, "modelId");
+        String comparisonId = textValue(payload.get("comparisonId"), "").trim();
+        if (comparisonId.isEmpty()) {
+            comparisonId = "cmp-" + UUID.randomUUID().toString().substring(0, 8);
+        }
+        if (comparisonId.length() > 120) {
+            throw new IllegalArgumentException("comparisonId must be 1-120 characters");
+        }
+        String caseId = textValue(payload.get("caseId"), "manual-" + comparisonId).trim();
+        if (caseId.isEmpty() || caseId.length() > 120) {
+            throw new IllegalArgumentException("caseId must be 1-120 characters");
+        }
+        RuntimeRun existingBaseline = findComparisonRun(comparisonId, RigidMappingBaseline.MODE);
+        RuntimeRun existingFlexible = findComparisonRun(comparisonId, "FLEXIBLE_ENGINE");
+        if (existingBaseline != null || existingFlexible != null) {
+            if (existingBaseline == null || existingFlexible == null) {
+                throw new IllegalStateException("comparison exists without a complete baseline/flexible pair: " + comparisonId);
+            }
+            return comparisonResult(comparisonId, caseId, existingBaseline, existingFlexible);
+        }
+
+        String originalStateJson;
+        try {
+            originalStateJson = mapper.writeValueAsString(state);
+        } catch (IOException exception) {
+            throw new IllegalStateException("cannot prepare comparison transaction", exception);
+        }
+
+        Map<String, Object> baselinePayload = copyPayload(payload);
+        baselinePayload.put("modelId", modelId);
+        baselinePayload.put("executionMode", RigidMappingBaseline.MODE);
+        baselinePayload.put("comparisonId", comparisonId);
+        baselinePayload.put("caseId", caseId);
+        baselinePayload.put("contextId", "ctx-" + comparisonId + "-baseline");
+        baselinePayload.put("idempotencyKey", "comparison:" + comparisonId + ":baseline");
+        Map<String, Object> flexiblePayload = copyPayload(payload);
+        flexiblePayload.put("modelId", modelId);
+        flexiblePayload.put("executionMode", "FLEXIBLE_ENGINE");
+        flexiblePayload.put("comparisonId", comparisonId);
+        flexiblePayload.put("caseId", caseId);
+        flexiblePayload.put("contextId", "ctx-" + comparisonId + "-flexible");
+        flexiblePayload.put("idempotencyKey", "comparison:" + comparisonId + ":flexible");
+
+        try {
+            RuntimeRun baseline = executeInternal(baselinePayload, true);
+            RuntimeRun flexible = executeInternal(flexiblePayload, true);
+            baseline.setPairedRunId(flexible.getId());
+            flexible.setPairedRunId(baseline.getId());
+            state.setUpdatedAt(Instant.now().toString());
+            repository.save(state, state.getRevision());
+            repository.markPersistenceCommitted(state, baseline.getId());
+            repository.markPersistenceCommitted(state, flexible.getId());
+            return comparisonResult(comparisonId, caseId, baseline, flexible);
+        } catch (RuntimeException exception) {
+            try {
+                restoreState(originalStateJson);
+            } catch (RuntimeException ignored) {
+                // Preserve the original failure; a failed comparison must not remain in memory.
+            }
+            throw exception;
+        }
+    }
+
+    private RuntimeRun executeRigidBaseline(Map<String, Object> payload, boolean deferPersistence) {
+        long startedAt = System.nanoTime();
+        String modelId = requiredText(payload, "modelId");
+        EngineModel model = model(modelId);
+        Map<String, Object> inputValues = mapValue(payload == null ? null : payload.get("values"));
+        String event = textValue(payload == null ? null : payload.get("event"), "").trim();
+        String contextId = textValue(payload == null ? null : payload.get("contextId"), "").trim();
+        if (contextId.isEmpty()) {
+            contextId = "ctx-" + UUID.randomUUID().toString().substring(0, 8);
+        }
+        String comparisonId = textValue(payload == null ? null : payload.get("comparisonId"), "").trim();
+        String caseId = textValue(payload == null ? null : payload.get("caseId"), "").trim();
+        String idempotencyKey = textValue(payload == null ? null : payload.get("idempotencyKey"), "").trim();
+        String requestSha256 = requestSha256(modelId, contextId, event, inputValues,
+                payload == null ? null : payload.get("ontology"));
+        String inputSha256 = comparisonInputSha256(modelId, event, inputValues,
+                payload == null ? null : payload.get("ontology"));
+        String scope = modelId + "|" + contextId + "|" + RigidMappingBaseline.MODE;
+        if (!idempotencyKey.isEmpty()) {
+            if (idempotencyKey.length() > 200) {
+                throw new IllegalArgumentException("idempotencyKey must be 1-200 characters");
+            }
+            IdempotencyRecord existing = idempotency(scope, idempotencyKey);
+            if (existing != null) {
+                if (!requestSha256.equals(existing.getRequestSha256())) {
+                    throw new IllegalArgumentException("idempotency key already used with a different request");
+                }
+                RuntimeRun prior = findRun(existing.getRunId());
+                if (prior == null) {
+                    throw new IllegalStateException("idempotency record points to a missing run: " + existing.getRunId());
+                }
+                return prior;
+            }
+        }
+
+        String originalStateJson;
+        try {
+            originalStateJson = mapper.writeValueAsString(state);
+        } catch (IOException exception) {
+            throw new IllegalStateException("cannot prepare baseline transaction", exception);
+        }
+        String runId = "run-" + UUID.randomUUID().toString().substring(0, 8);
+        String traceId = "trace-" + runId;
+        String startedAtIso = Instant.now().toString();
+        List<TraceSpanRecord> spans = new ArrayList<TraceSpanRecord>();
+        addSpan(spans, traceId, "request", System.nanoTime(), "OK",
+                mapOf("executionMode", RigidMappingBaseline.MODE, "modelId", modelId, "contextId", contextId));
+
+        RuntimeContextRecord context = findContext(modelId, contextId);
+        boolean newContext = context == null;
+        if (newContext) {
+            context = new RuntimeContextRecord(contextId, modelId, model.getSchemaVersion(), model.getWorkflowVersion(),
+                    model.getInitialState(), "CREATED", 0L, startedAtIso);
+            context.setValues(defaultValues(currentSchema(model)));
+        }
+        int beforeSchemaVersion = context.getSchemaVersion();
+        int beforeWorkflowVersion = context.getWorkflowVersion();
+        String fromState = context.getState();
+        Map<String, Object> beforeValues = mapValue(context.getValues());
+        Map<String, Object> executionValues = mapValue(beforeValues);
+        executionValues.putAll(inputValues);
+        long validationStarted = System.nanoTime();
+        RigidMappingBaseline.Result result = new RigidMappingBaseline().execute(modelId, fromState, event,
+                executionValues, payload == null ? null : payload.get("ontology"));
+        addSpan(spans, traceId, "validation", validationStarted, result.passed ? "OK" : "FAILED",
+                mapOf("errorCount", String.valueOf(result.errors.size()), "executionMode", RigidMappingBaseline.MODE));
+        long mappingStarted = System.nanoTime();
+        addSpan(spans, traceId, "mapping", mappingStarted, result.passed ? "OK" : "FAILED",
+                mapOf("mapping", "fixed-field-paths", "objectCount", String.valueOf(objectCount(result.graph))));
+
+        String status = result.passed ? "PASSED" : "FAILED";
+        String toState = result.passed ? result.toState : fromState;
+        Map<String, Object> afterValues = new LinkedHashMap<String, Object>(executionValues);
+        RuntimeRun run = new RuntimeRun();
+        run.setId(runId);
+        run.setModelId(modelId);
+        run.setExecutionMode(RigidMappingBaseline.MODE);
+        run.setComparisonId(comparisonId.isEmpty() ? null : comparisonId);
+        run.setCaseId(caseId.isEmpty() ? null : caseId);
+        run.setInputSha256(inputSha256);
+        run.setConfigurationSha256(fixedBaselineConfigurationSha256(modelId));
+        run.setContextId(contextId);
+        run.setEngineVersion(state.getEngineVersion());
+        run.setSchemaVersion(model.getSchemaVersion());
+        run.setWorkflowVersion(model.getWorkflowVersion());
+        run.setStatus(status);
+        run.setDataIdentity(EngineAdminService.DATA_IDENTITY);
+        run.setEvent(event);
+        run.setFromState(fromState);
+        run.setToState(toState);
+        run.setTraceId(traceId);
+        run.setCreatedAt(startedAtIso);
+        run.setIdempotencyKey(idempotencyKey.isEmpty() ? null : idempotencyKey);
+        run.setAttempt(1);
+        run.setContextRevision(result.passed ? context.getRevision() + 1L : context.getRevision());
+        run.setContextCommitted(result.passed);
+        run.setErrorCode(result.errorCode);
+        run.setInputValues(inputValues);
+        run.setValues(afterValues);
+        run.setOntologyGraph(result.graph);
+        run.setOntologyInput(copyValue(payload == null ? null : payload.get("ontology")));
+        run.setValidationErrors(result.errors);
+        run.setBeforeSnapshot(snapshot("BEFORE", contextId, modelId, beforeSchemaVersion, beforeWorkflowVersion,
+                fromState, contextStatus(context), startedAtIso, beforeValues));
+        run.setAfterSnapshot(snapshot("AFTER", contextId, modelId, model.getSchemaVersion(), model.getWorkflowVersion(),
+                toState, status, Instant.now().toString(), afterValues));
+        if (result.passed) {
+            context.setSchemaVersion(model.getSchemaVersion());
+            context.setWorkflowVersion(model.getWorkflowVersion());
+            context.setState(toState);
+            context.setStatus(status);
+            context.setValues(afterValues);
+            context.setRevision(context.getRevision() + 1L);
+            context.setLastRunId(runId);
+            context.setLastSnapshotSha256(run.getAfterSnapshot().getSha256());
+            context.setUpdatedAt(Instant.now().toString());
+        }
+        if (newContext) {
+            state.getContexts().add(context);
+        }
+        state.getRuns().add(0, run);
+        while (state.getRuns().size() > 50) {
+            state.getRuns().remove(state.getRuns().size() - 1);
+        }
+        if (!idempotencyKey.isEmpty()) {
+            state.getIdempotencyRecords().add(0, new IdempotencyRecord(scope, idempotencyKey, requestSha256,
+                    runId, Instant.now().toString()));
+        }
+        long persistenceStarted = System.nanoTime();
+        addSpan(spans, traceId, "persistence", persistenceStarted, "PREPARED",
+                mapOf("contextCommitted", String.valueOf(result.passed), "commitBoundary", "repository.commit"));
+        long responseStarted = System.nanoTime();
+        addSpan(spans, traceId, "response", responseStarted, "PREPARED",
+                mapOf("deliveryBoundary", "caller-observation"));
+        long durationNs = Math.max(0L, System.nanoTime() - startedAt);
+        long durationMs = Math.max(1L, durationNs / 1000000L);
+        run.setDurationNs(durationNs);
+        run.setDurationMs(durationMs);
+        run.setTrace(trace(run, startedAtIso, spans, status, durationNs, durationMs));
+        if (deferPersistence) {
+            return run;
+        }
+        try {
+            state.setUpdatedAt(Instant.now().toString());
+            repository.save(state, state.getRevision());
+        } catch (RuntimeException exception) {
+            restoreState(originalStateJson);
+            if (exception instanceof ConcurrentModificationException) {
+                throw (ConcurrentModificationException) exception;
+            }
+            throw exception;
+        }
+        try {
+            repository.markPersistenceCommitted(state, runId);
+        } catch (RuntimeException markerFailure) {
+            try {
+                restoreState(repository.load());
+            } catch (RuntimeException ignored) {
+                // Preserve the durable result and return the marker state below.
+            }
+            RuntimeRun persisted = findRun(runId);
+            if (persisted != null) {
+                return persisted;
+            }
+            throw new IllegalStateException("baseline run committed but trace commit observation failed", markerFailure);
+        }
+        return run;
+    }
+
+    private Map<String, Object> comparisonResult(String comparisonId, String caseId,
+                                                  RuntimeRun baseline, RuntimeRun flexible) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("comparisonId", comparisonId);
+        result.put("caseId", caseId);
+        result.put("comparable", baseline.getModelId().equals(flexible.getModelId())
+                && baseline.getEvent().equals(flexible.getEvent())
+                && baseline.getInputSha256() != null
+                && baseline.getInputSha256().equals(flexible.getInputSha256()));
+        result.put("baselineRun", baseline);
+        result.put("flexibleRun", flexible);
+        return result;
+    }
+
+    private RuntimeRun findComparisonRun(String comparisonId, String executionMode) {
+        for (RuntimeRun run : state.getRuns()) {
+            if (comparisonId.equals(run.getComparisonId()) && executionMode.equals(run.getExecutionMode())) {
+                return run;
+            }
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> copyPayload(Map<String, Object> payload) {
+        if (payload == null) {
+            throw new IllegalArgumentException("comparison payload must be an object");
+        }
+        return mapper.convertValue(payload, Map.class);
+    }
+
     synchronized RuntimeRun replay(String runId) {
         RuntimeRun original = findRun(runId);
         if (original == null) {
@@ -362,6 +650,9 @@ final class EngineRuntimeService {
         payload.put("replayFromState", original.getBeforeSnapshot().getState());
         payload.put("replayBeforeStatus", original.getBeforeSnapshot().getStatus());
         payload.put("replayValues", mapValue(original.getBeforeSnapshot().getValues()));
+        if (RigidMappingBaseline.MODE.equals(original.getExecutionMode())) {
+            payload.put("executionMode", RigidMappingBaseline.MODE);
+        }
         if (original.getOntologyVersion() > 0) {
             payload.put("expectedOntologyVersion", original.getOntologyVersion());
             payload.put("expectedOntologyDefinitionSha256", original.getOntologyDefinitionSha256());
@@ -385,6 +676,9 @@ final class EngineRuntimeService {
         payload.put("ontology", copyValue(original.getOntologyInput()));
         payload.put("retryOfRunId", original.getId());
         payload.put("attempt", original.getAttempt() + 1);
+        if (RigidMappingBaseline.MODE.equals(original.getExecutionMode())) {
+            payload.put("executionMode", RigidMappingBaseline.MODE);
+        }
         if (original.getOntologyVersion() > 0) {
             payload.put("expectedOntologyVersion", original.getOntologyVersion());
             payload.put("expectedOntologyDefinitionSha256", original.getOntologyDefinitionSha256());
@@ -437,6 +731,7 @@ final class EngineRuntimeService {
         RuntimeRun rollback = new RuntimeRun();
         rollback.setId(rollbackRunId);
         rollback.setModelId(original.getModelId());
+        rollback.setExecutionMode(original.getExecutionMode());
         rollback.setOntologyTypeId(original.getOntologyTypeId());
         rollback.setOntologyVersion(original.getOntologyVersion());
         rollback.setOntologyDefinitionSha256(original.getOntologyDefinitionSha256());
@@ -500,9 +795,11 @@ final class EngineRuntimeService {
                         "commitBoundary", "repository.commit"));
         long responseStarted = System.nanoTime();
         addSpan(spans, traceId, "response", responseStarted, "OK", Collections.<String, String>emptyMap());
-        long durationMs = Math.max(1L, (System.nanoTime() - startedAt) / 1000000L);
+        long durationNs = Math.max(0L, System.nanoTime() - startedAt);
+        long durationMs = Math.max(1L, durationNs / 1000000L);
+        rollback.setDurationNs(durationNs);
         rollback.setDurationMs(durationMs);
-        rollback.setTrace(trace(rollback, startedAtIso, spans, "ROLLED_BACK", durationMs));
+        rollback.setTrace(trace(rollback, startedAtIso, spans, "ROLLED_BACK", durationNs, durationMs));
 
         try {
             state.setUpdatedAt(Instant.now().toString());
@@ -709,12 +1006,14 @@ final class EngineRuntimeService {
         return record;
     }
 
-    private TraceRecord trace(RuntimeRun run, String startedAt, List<TraceSpanRecord> spans, String status, long durationMs) {
+    private TraceRecord trace(RuntimeRun run, String startedAt, List<TraceSpanRecord> spans, String status,
+                              long durationNs, long durationMs) {
         TraceRecord trace = new TraceRecord();
         trace.setRunId(run.getId());
         trace.setTraceId(run.getTraceId());
         trace.setStartedAt(startedAt);
         trace.setEndedAt(Instant.now().toString());
+        trace.setDurationNs(durationNs);
         trace.setDurationMs(durationMs);
         trace.setStatus(status);
         trace.setLifecycle("PREPARED");
@@ -735,9 +1034,11 @@ final class EngineRuntimeService {
     private void addSpan(List<TraceSpanRecord> spans, String traceId, String name, long startedAt,
                          Instant startedAtIso, long endedAt, Instant endedAtIso, String status,
                          Map<String, String> attributes) {
-        spans.add(new TraceSpanRecord("span-" + UUID.randomUUID().toString().substring(0, 8), traceId, name,
-                startedAtIso.toString(), endedAtIso.toString(), Math.max(0L, (endedAt - startedAt) / 1000000L),
-                status, attributes));
+        long elapsedNanos = Math.max(0L, endedAt - startedAt);
+        TraceSpanRecord span = new TraceSpanRecord("span-" + UUID.randomUUID().toString().substring(0, 8), traceId,
+                name, startedAtIso.toString(), endedAtIso.toString(), elapsedNanos / 1000000L, status, attributes);
+        span.setDurationNs(elapsedNanos);
+        spans.add(span);
     }
 
     private String json(Object value) {
@@ -820,6 +1121,72 @@ final class EngineRuntimeService {
         request.put("values", values);
         request.put("ontology", copyValue(ontology));
         return new cn.finalartical.reproduction.flexible.ContextSnapshot(request).getSha256();
+    }
+
+    private String comparisonInputSha256(String modelId, String event, Map<String, Object> values,
+                                         Object ontology) {
+        Map<String, Object> input = new LinkedHashMap<String, Object>();
+        input.put("modelId", modelId);
+        input.put("event", event);
+        input.put("values", values);
+        input.put("ontology", copyValue(ontology));
+        return new cn.finalartical.reproduction.flexible.ContextSnapshot(input).getSha256();
+    }
+
+    private String fixedBaselineConfigurationSha256(String modelId) {
+        Map<String, Object> configuration = new LinkedHashMap<String, Object>();
+        configuration.put("implementation", "RigidMappingBaseline");
+        configuration.put("version", "1");
+        configuration.put("modelId", modelId);
+        return new cn.finalartical.reproduction.flexible.ContextSnapshot(configuration).getSha256();
+    }
+
+    private String flexibleConfigurationSha256(EngineModel model, int ontologyVersion,
+                                               String ontologyDefinitionSha256) {
+        Map<String, Object> configuration = new LinkedHashMap<String, Object>();
+        configuration.put("implementation", "FlexibleEngine");
+        configuration.put("engineVersion", state.getEngineVersion());
+        configuration.put("modelId", model.getId());
+        configuration.put("schemaVersion", model.getSchemaVersion());
+        configuration.put("workflowVersion", model.getWorkflowVersion());
+        configuration.put("schema", schemaIdentity(currentSchema(model)));
+        configuration.put("workflow", workflowIdentity(workflow(model, model.getWorkflowVersion())));
+        configuration.put("ontologyTypeId", model.getOntologyTypeId());
+        configuration.put("ontologyVersion", ontologyVersion);
+        configuration.put("ontologyDefinitionSha256", ontologyDefinitionSha256);
+        return new cn.finalartical.reproduction.flexible.ContextSnapshot(configuration).getSha256();
+    }
+
+    private Map<String, Object> schemaIdentity(SchemaVersionRecord schema) {
+        Map<String, Object> identity = new LinkedHashMap<String, Object>();
+        identity.put("version", schema.getVersion());
+        List<Map<String, Object>> fields = new ArrayList<Map<String, Object>>();
+        for (EngineField field : schema.getFields()) {
+            Map<String, Object> fieldIdentity = new LinkedHashMap<String, Object>();
+            fieldIdentity.put("name", field.getName());
+            fieldIdentity.put("type", field.getType());
+            fieldIdentity.put("required", field.isRequired());
+            fieldIdentity.put("version", field.getVersion());
+            fieldIdentity.put("defaultValue", copyValue(field.getDefaultValue()));
+            fields.add(fieldIdentity);
+        }
+        identity.put("fields", fields);
+        return identity;
+    }
+
+    private Map<String, Object> workflowIdentity(WorkflowDefinition definition) {
+        Map<String, Object> identity = new LinkedHashMap<String, Object>();
+        identity.put("initialState", definition.getInitialState());
+        List<Map<String, Object>> transitions = new ArrayList<Map<String, Object>>();
+        for (WorkflowTransition transition : definition.getTransitions()) {
+            Map<String, Object> transitionIdentity = new LinkedHashMap<String, Object>();
+            transitionIdentity.put("fromState", transition.getFromState());
+            transitionIdentity.put("event", transition.getEvent());
+            transitionIdentity.put("toState", transition.getToState());
+            transitions.add(transitionIdentity);
+        }
+        identity.put("transitions", transitions);
+        return identity;
     }
 
     private Map<String, Object> mapValue(Object value) {

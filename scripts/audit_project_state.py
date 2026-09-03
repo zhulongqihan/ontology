@@ -182,7 +182,7 @@ def main():
     parser.add_argument("--sqlite", default="data/flexible-engine.db", type=Path)
     parser.add_argument("--legacy-json", default="data/engine-state.json", type=Path)
     parser.add_argument("--contract-report", type=Path)
-    parser.add_argument("--expected-schema-version", default=12, type=int)
+    parser.add_argument("--expected-schema-version", default=14, type=int)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 

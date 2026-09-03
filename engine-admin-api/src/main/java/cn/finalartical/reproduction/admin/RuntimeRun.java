@@ -8,6 +8,12 @@ import java.util.Map;
 public class RuntimeRun {
     private String id;
     private String modelId;
+    private String executionMode = "FLEXIBLE_ENGINE";
+    private String comparisonId;
+    private String pairedRunId;
+    private String caseId;
+    private String inputSha256;
+    private String configurationSha256;
     private String ontologyTypeId;
     private int ontologyVersion;
     private String ontologyDefinitionSha256;
@@ -22,6 +28,7 @@ public class RuntimeRun {
     private String toState;
     private String traceId;
     private String createdAt;
+    private long durationNs;
     private long durationMs;
     private String idempotencyKey;
     private String retryOfRunId;
@@ -56,6 +63,55 @@ public class RuntimeRun {
 
     public void setModelId(String modelId) {
         this.modelId = modelId;
+    }
+
+    public String getExecutionMode() {
+        return executionMode;
+    }
+
+    public void setExecutionMode(String executionMode) {
+        this.executionMode = executionMode == null || executionMode.trim().isEmpty()
+                ? "FLEXIBLE_ENGINE" : executionMode;
+    }
+
+    public String getComparisonId() {
+        return comparisonId;
+    }
+
+    public void setComparisonId(String comparisonId) {
+        this.comparisonId = comparisonId;
+    }
+
+    public String getPairedRunId() {
+        return pairedRunId;
+    }
+
+    public void setPairedRunId(String pairedRunId) {
+        this.pairedRunId = pairedRunId;
+    }
+
+    public String getCaseId() {
+        return caseId;
+    }
+
+    public void setCaseId(String caseId) {
+        this.caseId = caseId;
+    }
+
+    public String getInputSha256() {
+        return inputSha256;
+    }
+
+    public void setInputSha256(String inputSha256) {
+        this.inputSha256 = inputSha256;
+    }
+
+    public String getConfigurationSha256() {
+        return configurationSha256;
+    }
+
+    public void setConfigurationSha256(String configurationSha256) {
+        this.configurationSha256 = configurationSha256;
     }
 
     public String getOntologyTypeId() {
@@ -176,6 +232,14 @@ public class RuntimeRun {
 
     public void setDurationMs(long durationMs) {
         this.durationMs = durationMs;
+    }
+
+    public long getDurationNs() {
+        return durationNs;
+    }
+
+    public void setDurationNs(long durationNs) {
+        this.durationNs = Math.max(0L, durationNs);
     }
 
     public String getIdempotencyKey() {
