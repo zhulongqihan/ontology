@@ -137,6 +137,32 @@ npm.cmd run dev
 
 控制面首页按“定义模型 → 绑定本体 → 真实运行 → 复核证据”组织操作。知识图谱页面区分注册的本体定义和真实 Run 的 `ontologyGraph`；成对运行页面通过 `POST /api/comparisons/execute` 创建独立 `RigidMappingBaseline` 与 Flexible Engine Run，读取持久化证据并检查输入条件是否一致。页面明确显示固定基线边界，不把该实现内对比写成原生产系统 Before/After 提升。
 
+### 最短可复核路径：从控制面看到运行时图谱
+
+默认问卷输入只包含标量字段，因此对比页中的“运行图谱”显示空状态是预期结果，不是静态图谱被冒充为运行结果。要观察真实 `RuntimeRun.ontologyGraph`，按以下步骤操作：
+
+1. 进入“模型管理”选择 `questionnaire`，进入“Schema / 字段”，新增字段 `subjects`，类型选择 `JSON`；字段写入后会产生新的 Schema 版本。
+2. 进入“本体模型”，确认 `questionnaire`、`subject`、`option` 及其关系已经注册；运行时装配要求模型存在显式本体绑定。
+3. 进入“对比分析”，保留同一个模型和事件，将输入替换为下面的最小样例，然后执行“基线 + Flexible Engine”：
+
+```json
+{
+  "name": "图谱样例",
+  "subjectId": "subject-001",
+  "subjects": [
+    {
+      "id": "subject-001",
+      "title": "集合",
+      "options": [{ "id": "option-001", "label": "List" }]
+    }
+  ]
+}
+```
+
+4. 在对比结果和“知识图谱”页面切换到新生成的 Flexible Run，核对 `RuntimeRun.ontologyGraph` 的对象数、关系数、root object、Trace 和 Snapshot。最终实验中的同类输入及 SVG/JSON 产物位于 `docs/实验证据/20260903_baseline_flexible_final/D/`。
+
+该路径展示的是当前重构系统的本地、进程内运行证据；它不代表原生产系统的黑盒等价性、远程调用链或业务指标提升。
+
 ## 管理 API
 
 | 方法 | 路由 | 用途 |
