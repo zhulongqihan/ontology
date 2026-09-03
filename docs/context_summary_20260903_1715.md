@@ -51,3 +51,12 @@
 3. 为新增控制面能力补自动化测试，完成全量测试、package、前端构建、契约实验、smoke、重启/坏数据等相关验证。
 4. 若测试总数变化，必须同步论文、审查文档和一致性脚本，不能留下数字漂移。
 5. 完成 `git diff --check`、状态检查、提交并推送；最终明确仍无法证明的 legacy 数据和论文边界。
+
+## 本轮执行结果（后续修订）
+
+- 已完成控制面迭代并提交为 `dfc7770`：新增 `ComparisonSummary`、`GET /api/comparisons`、`GET /api/comparisons/{comparisonId}`，前端新增持久化对比会话历史；该投影只从 `RuntimeRun` 派生，不维护第二事实源。
+- 当前工程测试为 92/92 通过；clean package 和前端生产构建通过；论文一致性脚本在实验报告更新后通过。
+- 已在提交 `dfc7770` 构建的 jar 上重新执行 A/B/C/D/E，并将 canonical 产物保存到 `docs/实验证据/20260903_evolution_capability_control_plane/`。E 结果为 36 对可比、baseline 12/36、Flexible 36/36、改进 24/36、证据 36/36；D 的逐次配对 p50 差值以报告中的 `duration_delta_ns.p50` 为准：731,800、600,900、803,300 ns。
+- 已通过真实浏览器操作验证空 SQLite 从 0 个对比会话到 1 个持久化会话，页面展开真实 baseline/flexible Run、Trace、Snapshot 和结构化证据；截图为 `output/playwright/control-plane-comparison-20260903.png`。
+- 已执行独立契约 smoke：seed=20260903 时 20/20 通过；默认 jar smoke 输出 `ENGINE_RUNTIME_RESULT`、`workflow.state=IN_INTERVIEW`、空 validationErrors 和 questionnaire detail SUCCESS。
+- 仍未改变的边界：历史 schema 4 SQLite/旧 JSON 警告继续保留并只读审计；无 XeLaTeX/latexmk，论文 PDF 编译和视觉验收仍无法在本环境证明；没有原生产黑盒样本、远程 Provider 或线上业务指标。

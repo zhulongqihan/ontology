@@ -1,0 +1,1 @@
+{"trace_id":"trace-C-20","capability":"interview-session-detail","scenario":"invalid","request_shape":"questionnaire_id=!invalid","arguments":{"questionnaire_id":"!invalid"}}

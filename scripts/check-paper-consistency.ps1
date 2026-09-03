@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $bodyPath = Join-Path $PaperRoot 'chapter\正文.tex'
 $rootPath = Join-Path $PaperRoot '论文初稿.tex'
 $bibPath = Join-Path $PaperRoot 'references.bib'
-$reportPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs\实验证据\20260903_evolution_capability_final\report.json'
+$reportPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs\实验证据\20260903_evolution_capability_control_plane\report.json'
 
 foreach ($path in @($bodyPath, $rootPath, $bibPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {

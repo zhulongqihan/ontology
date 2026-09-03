@@ -1,0 +1,13 @@
+{
+  "hypothesis" : "a model may use a different identifier from its root ontology type",
+  "repository" : "SQLite",
+  "explicit_binding" : "assessment-session -> questionnaire",
+  "explicit_status" : "PASSED",
+  "explicit_root_type" : "questionnaire",
+  "explicit_ontology_version" : 1,
+  "explicit_ontology_definition_sha256" : "b9026d86ec2d241422f8a047146aa8f319d69ce3184c979b2ad03ce997c0daad",
+  "explicit_correct" : true,
+  "name_derived_baseline_root_type" : "assessment-session",
+  "name_derived_baseline_correct" : false,
+  "interpretation" : "the baseline is an executable identifier-derived resolver; it is not a complete competing system"
+}

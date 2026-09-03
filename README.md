@@ -159,7 +159,7 @@ npm.cmd run dev
 }
 ```
 
-4. 在对比结果和“知识图谱”页面切换到新生成的 Flexible Run，核对 `RuntimeRun.ontologyGraph` 的对象数、关系数、root object、Trace 和 Snapshot。最终实验中的同类输入及 SVG/JSON 产物位于 `docs/实验证据/20260903_evolution_capability_final/D/`。
+4. 在对比结果和“知识图谱”页面切换到新生成的 Flexible Run，核对 `RuntimeRun.ontologyGraph` 的对象数、关系数、root object、Trace 和 Snapshot。最终实验中的同类输入及 SVG/JSON 产物位于 `docs/实验证据/20260903_evolution_capability_control_plane/D/`。
 
 该路径展示的是当前重构系统的本地、进程内运行证据；它不代表原生产系统的黑盒等价性、远程调用链或业务指标提升。
 

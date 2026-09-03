@@ -1,0 +1,1 @@
+{"case_id":"C-03","capability":"questionnaire-query","scenario":"compatibility","request_shape":"legacy_subject_id=subject-001","expected_behavior":"COMPATIBLE_SUCCESS","raw_status":"SUCCESS","actual_behavior":"COMPATIBLE_SUCCESS","trace_id":"trace-C-03","passed":true,"data_identity":"ENGINE_EXPERIMENT_RESULT"}
