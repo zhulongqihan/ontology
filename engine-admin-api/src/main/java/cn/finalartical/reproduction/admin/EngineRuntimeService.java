@@ -380,11 +380,19 @@ final class EngineRuntimeService {
         if (caseId.isEmpty() || caseId.length() > 120) {
             throw new IllegalArgumentException("caseId must be 1-120 characters");
         }
+        Map<String, Object> requestedInputValues = mapValue(payload == null ? null : payload.get("values"));
+        String requestedEvent = textValue(payload == null ? null : payload.get("event"), "").trim();
+        String requestedInputSha256 = comparisonInputSha256(modelId, requestedEvent, requestedInputValues,
+                payload == null ? null : payload.get("ontology"));
         RuntimeRun existingBaseline = findComparisonRun(comparisonId, RigidMappingBaseline.MODE);
         RuntimeRun existingFlexible = findComparisonRun(comparisonId, "FLEXIBLE_ENGINE");
         if (existingBaseline != null || existingFlexible != null) {
             if (existingBaseline == null || existingFlexible == null) {
                 throw new IllegalStateException("comparison exists without a complete baseline/flexible pair: " + comparisonId);
+            }
+            if (!sameComparisonRequest(modelId, requestedEvent, caseId, requestedInputSha256,
+                    existingBaseline, existingFlexible)) {
+                throw new IllegalArgumentException("comparisonId already used with a different request: " + comparisonId);
             }
             return comparisonResult(comparisonId, caseId, existingBaseline, existingFlexible);
         }
@@ -621,6 +629,18 @@ final class EngineRuntimeService {
             }
         }
         return null;
+    }
+
+    private boolean sameComparisonRequest(String modelId, String event, String caseId, String inputSha256,
+                                          RuntimeRun baseline, RuntimeRun flexible) {
+        return modelId.equals(baseline.getModelId())
+                && modelId.equals(flexible.getModelId())
+                && event.equals(baseline.getEvent())
+                && event.equals(flexible.getEvent())
+                && caseId.equals(baseline.getCaseId())
+                && caseId.equals(flexible.getCaseId())
+                && inputSha256.equals(baseline.getInputSha256())
+                && inputSha256.equals(flexible.getInputSha256());
     }
 
     @SuppressWarnings("unchecked")

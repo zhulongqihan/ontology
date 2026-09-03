@@ -19,7 +19,7 @@ $body = Get-Content -LiteralPath $bodyPath -Raw
 $root = Get-Content -LiteralPath $rootPath -Raw
 $bib = Get-Content -LiteralPath $bibPath -Raw
 
-foreach ($term in @('RQ1', 'RQ2', 'RQ3', 'RQ4', 'ontologyTypeId', 'Ontology version', 'definition hash', 'COMMITTED', 'PREPARED', 'A/B/C/D', 'RigidMappingBaseline', 'duration\_ns', 'BEGIN IMMEDIATE', '89 条', 'Replay')) {
+foreach ($term in @('RQ1', 'RQ2', 'RQ3', 'RQ4', 'ontologyTypeId', 'Ontology version', 'definition hash', 'COMMITTED', 'PREPARED', 'A/B/C/D', 'RigidMappingBaseline', 'duration\_ns', 'BEGIN IMMEDIATE', '90 条', 'Replay')) {
     if ($body.IndexOf($term, [StringComparison]::Ordinal) -lt 0 -and $root.IndexOf($term, [StringComparison]::Ordinal) -lt 0) {
         throw "paper source does not contain required term: $term"
     }

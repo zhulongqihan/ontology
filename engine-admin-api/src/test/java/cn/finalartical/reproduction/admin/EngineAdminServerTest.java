@@ -134,6 +134,12 @@ public class EngineAdminServerTest {
             assertTrue(response.body.contains("cmp-http-001"));
             assertTrue(response.body.contains("pairedRunId"));
             assertTrue(response.body.contains("inputSha256"));
+
+            values.put("name", "HTTP 对比冲突");
+            HttpResponse conflict = request(server, "POST", "/api/comparisons/execute",
+                    mapper.writeValueAsString(payload));
+            assertEquals(400, conflict.status);
+            assertTrue(conflict.body.contains("different request"));
         } finally {
             server.stop();
         }

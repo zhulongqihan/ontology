@@ -1006,6 +1006,42 @@ public class EngineAdminServiceTest {
         assertEquals(baseline.getInputSha256(), flexible.getInputSha256());
     }
 
+    @Test
+    public void comparisonIdRejectsAChangedRequestInsteadOfReturningStaleEvidence() throws Exception {
+        Path path = Files.createTempDirectory("engine-comparison-idempotency").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> first = new LinkedHashMap<String, Object>();
+        first.put("comparisonId", "cmp-idempotency-001");
+        first.put("caseId", "questionnaire-basic");
+        first.put("modelId", "questionnaire");
+        first.put("event", "publish");
+        first.put("values", new LinkedHashMap<String, Object>() {{
+            put("name", "第一次请求");
+            put("subjectId", "subject-001");
+        }});
+
+        Map<String, Object> result = service.executeComparison(first);
+        RuntimeRun baseline = (RuntimeRun) result.get("baselineRun");
+        long revision = service.revision();
+        Map<String, Object> changed = new LinkedHashMap<String, Object>(first);
+        changed.put("values", new LinkedHashMap<String, Object>() {{
+            put("name", "被篡改的第二次请求");
+            put("subjectId", "subject-002");
+        }});
+
+        boolean rejected = false;
+        try {
+            service.executeComparison(changed);
+        } catch (IllegalArgumentException exception) {
+            rejected = true;
+            assertTrue(exception.getMessage().contains("different request"));
+        }
+        assertTrue(rejected);
+        assertEquals(revision, service.revision());
+        assertEquals(2, service.runs().size());
+        assertEquals("第一次请求", service.run(baseline.getId()).getInputValues().get("name"));
+    }
+
     private static List<String> spanNames(RuntimeRun run) {
         List<String> names = new ArrayList<String>();
         for (TraceSpanRecord span : run.getTrace().getSpans()) {
