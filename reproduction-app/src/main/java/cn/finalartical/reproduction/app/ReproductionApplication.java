@@ -138,7 +138,7 @@ public final class ReproductionApplication {
             Path output = args.length > 2 ? Paths.get(args[2])
                     : Paths.get("runs", "reproduction-suite", "latest");
             Map<String, Object> report = new ReproductionExperimentSuite().run(cases, output);
-            System.out.println("experiment=reproduction-abcd");
+            System.out.println("experiment=" + report.get("suite_id"));
             System.out.println("data_identity=ENGINE_EXPERIMENT_RESULT");
             System.out.println("output=" + output.toAbsolutePath());
             System.out.println("sections=" + report.keySet());

@@ -1007,6 +1007,42 @@ public class EngineAdminServiceTest {
     }
 
     @Test
+    public void comparisonShowsFlexibleAdaptationAfterAnExplicitFieldRenameMigration() throws Exception {
+        Path path = Files.createTempDirectory("engine-comparison-rename-adaptation").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        service.renameField("interview-session", new LinkedHashMap<String, Object>() {{
+            put("sourceName", "candidateName");
+            put("targetName", "applicantName");
+        }});
+
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("comparisonId", "cmp-rename-adaptation-001");
+        payload.put("caseId", "interview-field-rename");
+        payload.put("modelId", "interview-session");
+        payload.put("event", "startInterview");
+        payload.put("values", new LinkedHashMap<String, Object>() {{
+            put("applicantName", "重命名候选人");
+            put("score", 92);
+        }});
+
+        Map<String, Object> result = service.executeComparison(payload);
+        RuntimeRun baseline = (RuntimeRun) result.get("baselineRun");
+        RuntimeRun flexible = (RuntimeRun) result.get("flexibleRun");
+
+        assertEquals("FAILED", baseline.getStatus());
+        assertEquals("BASELINE_VALIDATION_ERROR", baseline.getErrorCode());
+        assertEquals("PASSED", flexible.getStatus());
+        assertEquals("IN_INTERVIEW", flexible.getToState());
+        assertEquals("重命名候选人", flexible.getValues().get("applicantName"));
+        assertTrue(!flexible.getValues().containsKey("candidateName"));
+        assertEquals(3, flexible.getSchemaVersion());
+        assertEquals(1, service.model("interview-session").getSchemaMigrations().size());
+        assertEquals(baseline.getInputSha256(), flexible.getInputSha256());
+        assertEquals("COMMITTED", flexible.getTrace().getLifecycle());
+        assertTrue(flexible.getBeforeSnapshot() != null && flexible.getAfterSnapshot() != null);
+    }
+
+    @Test
     public void comparisonIdRejectsAChangedRequestInsteadOfReturningStaleEvidence() throws Exception {
         Path path = Files.createTempDirectory("engine-comparison-idempotency").resolve("state.json");
         EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));

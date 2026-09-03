@@ -19,14 +19,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Reproducible mechanism, fault, and repeatability experiments for the thesis. */
+/** Reproducible mechanism, fault, repeatability, and evolution experiments for the thesis. */
 public final class ReproductionExperimentSuite {
     private final ObjectMapper mapper = new ObjectMapper();
 
     public Map<String, Object> run(Path contractCases, Path output) throws Exception {
         Files.createDirectories(output);
         Map<String, Object> report = new LinkedHashMap<String, Object>();
-        report.put("suite_id", "reproduction-abcd");
+        report.put("suite_id", "reproduction-abcde");
         report.put("generated_at", Instant.now().toString());
         report.put("data_identity", "ENGINE_EXPERIMENT_RESULT");
         report.put("source_revision", System.getProperty("reproduction.source.revision", "UNKNOWN"));
@@ -36,6 +36,7 @@ public final class ReproductionExperimentSuite {
         report.put("B_fault_injection", faultInjection(output.resolve("B")));
         report.put("C_repeatability_ablation", repeatabilityAndAblation(contractCases, output.resolve("C")));
         report.put("D_baseline_flexible_comparison", baselineFlexibleComparison(output.resolve("D")));
+        report.put("E_evolution_capability_matrix", evolutionCapabilityMatrix(output.resolve("E")));
         write(report, output.resolve("report.json"));
         writeCsv(report, output.resolve("summary.csv"));
         writeManifest(contractCases, output, report);
@@ -264,6 +265,213 @@ public final class ReproductionExperimentSuite {
         return result;
     }
 
+    private Map<String, Object> evolutionCapabilityMatrix(Path output) throws Exception {
+        Files.createDirectories(output);
+        List<String> caseIds = Arrays.asList(
+                "interview-dynamic-field",
+                "interview-field-rename",
+                "questionnaire-dynamic-graph");
+        Map<String, Object> cases = new LinkedHashMap<String, Object>();
+        List<Map<String, Object>> allObservations = new ArrayList<Map<String, Object>>();
+        for (String caseId : caseIds) {
+            List<Map<String, Object>> observations = new ArrayList<Map<String, Object>>();
+            for (int trial = 1; trial <= 12; trial++) {
+                Path database = Files.createTempDirectory("experiment-e-" + caseId + "-" + trial).resolve("state.db");
+                EngineAdminService service = new EngineAdminService(new SqliteEngineStateRepository(database));
+                configureEvolutionCase(service, caseId);
+                Map<String, Object> payload = evolutionPayload(caseId, "evo-" + caseId + "-" + trial);
+                Map<String, Object> comparison = service.executeComparison(payload);
+                RuntimeRun baseline = (RuntimeRun) comparison.get("baselineRun");
+                RuntimeRun flexible = (RuntimeRun) comparison.get("flexibleRun");
+                Map<String, Object> observation = new LinkedHashMap<String, Object>();
+                observation.put("trial", trial);
+                observation.put("comparison_id", comparison.get("comparisonId"));
+                observation.put("case_id", caseId);
+                observation.put("configuration_action", evolutionAction(caseId));
+                observation.put("model_schema_version", service.model(payload.get("modelId").toString()).getSchemaVersion());
+                observation.put("schema_migration_count", service.model(payload.get("modelId").toString())
+                        .getSchemaMigrations().size());
+                observation.put("comparable", comparison.get("comparable"));
+                observation.put("input_sha256", baseline.getInputSha256());
+                observation.put("baseline_run_id", baseline.getId());
+                observation.put("flexible_run_id", flexible.getId());
+                observation.put("baseline_status", baseline.getStatus());
+                observation.put("flexible_status", flexible.getStatus());
+                observation.put("baseline_error_code", baseline.getErrorCode());
+                observation.put("flexible_error_code", flexible.getErrorCode());
+                observation.put("baseline_duration_ns", baseline.getDurationNs());
+                observation.put("flexible_duration_ns", flexible.getDurationNs());
+                observation.put("duration_delta_ns", flexible.getDurationNs() - baseline.getDurationNs());
+                observation.put("outcome_improved", "FAILED".equals(baseline.getStatus())
+                        && "PASSED".equals(flexible.getStatus()));
+                observation.put("baseline_configuration_sha256", baseline.getConfigurationSha256());
+                observation.put("flexible_configuration_sha256", flexible.getConfigurationSha256());
+                observation.put("baseline_trace_spans", spanNames(baseline));
+                observation.put("flexible_trace_spans", spanNames(flexible));
+                observation.put("baseline_trace_lifecycle", baseline.getTrace() == null ? null : baseline.getTrace().getLifecycle());
+                observation.put("flexible_trace_lifecycle", flexible.getTrace() == null ? null : flexible.getTrace().getLifecycle());
+                observation.put("baseline_evidence_complete", completeEvidence(baseline));
+                observation.put("flexible_evidence_complete", completeEvidence(flexible));
+                observation.put("evidence_complete", completeEvidence(baseline) && completeEvidence(flexible));
+                observations.add(observation);
+                allObservations.add(observation);
+            }
+            Map<String, Object> summary = summarizeEvolutionCase(caseId, observations);
+            cases.put(caseId, summary);
+            write(observations, output.resolve(caseId + "-observations.json"));
+        }
+        int comparablePairs = 0;
+        int baselinePassed = 0;
+        int flexiblePassed = 0;
+        int improvedPairs = 0;
+        int completeEvidencePairs = 0;
+        for (Map<String, Object> observation : allObservations) {
+            if (Boolean.TRUE.equals(observation.get("comparable"))) comparablePairs++;
+            if ("PASSED".equals(observation.get("baseline_status"))) baselinePassed++;
+            if ("PASSED".equals(observation.get("flexible_status"))) flexiblePassed++;
+            if (Boolean.TRUE.equals(observation.get("outcome_improved"))) improvedPairs++;
+            if (Boolean.TRUE.equals(observation.get("evidence_complete"))) completeEvidencePairs++;
+        }
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("protocol", "三个演化案例各执行 12 次；每次使用全新 SQLite，从 DefaultEngineSeed 配置后执行固定映射基线与 Flexible Engine");
+        result.put("baseline_identity", "RigidMappingBaseline v1");
+        result.put("flexible_identity", "FlexibleEngine + configured schema/workflow/ontology");
+        result.put("comparison_input_rule", "input_sha256 必须相同，configuration_sha256 必须不同");
+        result.put("case_count", cases.size());
+        result.put("trial_count_per_case", 12);
+        result.put("comparable_pairs", comparablePairs);
+        result.put("baseline_passed", baselinePassed);
+        result.put("flexible_passed", flexiblePassed);
+        result.put("outcome_improved_pairs", improvedPairs);
+        result.put("adaptation_gain_pairs", flexiblePassed - baselinePassed);
+        result.put("baseline_pass_rate", rate(baselinePassed, comparablePairs));
+        result.put("flexible_pass_rate", rate(flexiblePassed, comparablePairs));
+        result.put("adaptation_gain_rate", rate(flexiblePassed - baselinePassed, comparablePairs));
+        result.put("evidence_complete_pairs", completeEvidencePairs);
+        result.put("all_input_hashes_consistent", allInputHashesConsistent(allObservations));
+        result.put("all_evidence_complete", completeEvidencePairs == allObservations.size());
+        result.put("cases", cases);
+        result.put("observations", allObservations);
+        result.put("interpretation", "提升仅指本地固定映射基线到当前 Flexible Engine 的演化适应性差异；耗时和通过率不能外推为原生产系统或业务收益");
+        write(result, output.resolve("result.json"));
+        writeEvolutionCapabilitySvg(cases, output.resolve("capability-comparison.svg"));
+        return result;
+    }
+
+    private void configureEvolutionCase(EngineAdminService service, String caseId) {
+        if ("interview-dynamic-field".equals(caseId)) {
+            service.addField("interview-session", new LinkedHashMap<String, Object>() {{
+                put("name", "panelId"); put("type", "STRING"); put("required", false);
+            }});
+        }
+        if ("interview-field-rename".equals(caseId)) {
+            service.renameField("interview-session", new LinkedHashMap<String, Object>() {{
+                put("sourceName", "candidateName"); put("targetName", "applicantName");
+            }});
+        }
+        if ("questionnaire-dynamic-graph".equals(caseId)) {
+            service.addField("questionnaire", new LinkedHashMap<String, Object>() {{
+                put("name", "subjects"); put("type", "JSON"); put("required", false);
+            }});
+        }
+    }
+
+    private Map<String, Object> evolutionPayload(String caseId, String comparisonId) {
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        String modelId;
+        String event;
+        if ("interview-dynamic-field".equals(caseId)) {
+            modelId = "interview-session";
+            event = "startInterview";
+            values.put("candidateName", "演化实验候选人");
+            values.put("score", 91);
+            values.put("panelId", "panel-001");
+        } else if ("interview-field-rename".equals(caseId)) {
+            modelId = "interview-session";
+            event = "startInterview";
+            values.put("applicantName", "重命名候选人");
+            values.put("score", 92);
+        } else {
+            modelId = "questionnaire";
+            event = "publish";
+            values.put("name", "演化实验问卷");
+            values.put("subjectId", "s-evo-001");
+            Map<String, Object> option = new LinkedHashMap<String, Object>();
+            option.put("id", "o-evo-001"); option.put("label", "List");
+            Map<String, Object> subject = new LinkedHashMap<String, Object>();
+            subject.put("id", "s-evo-001"); subject.put("title", "演化题目");
+            subject.put("options", Arrays.<Object>asList(option));
+            values.put("subjects", Arrays.<Object>asList(subject));
+        }
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("comparisonId", comparisonId);
+        payload.put("caseId", caseId);
+        payload.put("modelId", modelId);
+        payload.put("event", event);
+        payload.put("values", values);
+        return payload;
+    }
+
+    private String evolutionAction(String caseId) {
+        if ("interview-dynamic-field".equals(caseId)) return "add_field:panelId";
+        if ("interview-field-rename".equals(caseId)) return "rename_field:candidateName->applicantName";
+        return "add_field:subjects(JSON)+runtime_graph_input";
+    }
+
+    private Map<String, Object> summarizeEvolutionCase(String caseId, List<Map<String, Object>> observations) {
+        Map<String, Object> result = summarizeComparisonCase(caseId, observations);
+        int evidenceComplete = 0;
+        int migrationConfigured = 0;
+        for (Map<String, Object> observation : observations) {
+            if (Boolean.TRUE.equals(observation.get("evidence_complete"))) evidenceComplete++;
+            if (((Number) observation.get("schema_migration_count")).intValue() > 0) migrationConfigured++;
+        }
+        result.put("evidence_complete_pairs", evidenceComplete);
+        result.put("schema_migration_observations", migrationConfigured);
+        result.put("adaptation_gain_pairs", ((Number) result.get("flexible_passed")).intValue()
+                - ((Number) result.get("baseline_passed")).intValue());
+        result.put("baseline_pass_rate", rate(((Number) result.get("baseline_passed")).intValue(),
+                ((Number) result.get("comparable_pairs")).intValue()));
+        result.put("flexible_pass_rate", rate(((Number) result.get("flexible_passed")).intValue(),
+                ((Number) result.get("comparable_pairs")).intValue()));
+        result.put("adaptation_gain_rate", rate(((Number) result.get("adaptation_gain_pairs")).intValue(),
+                ((Number) result.get("comparable_pairs")).intValue()));
+        return result;
+    }
+
+    private boolean completeEvidence(RuntimeRun run) {
+        return run != null
+                && run.getId() != null
+                && run.getComparisonId() != null
+                && run.getPairedRunId() != null
+                && run.getInputSha256() != null
+                && run.getConfigurationSha256() != null
+                && run.getBeforeSnapshot() != null
+                && run.getAfterSnapshot() != null
+                && run.getTrace() != null
+                && run.getTrace().isSealed()
+                && "COMMITTED".equals(run.getTrace().getLifecycle())
+                && run.getTrace().getRunId() != null
+                && run.getTrace().getTraceId() != null
+                && run.getTrace().getSpans() != null
+                && run.getTrace().getSpans().size() >= 4;
+    }
+
+    private boolean allInputHashesConsistent(List<Map<String, Object>> observations) {
+        Map<String, String> firstHashByCase = new LinkedHashMap<String, String>();
+        for (Map<String, Object> observation : observations) {
+            String caseId = String.valueOf(observation.get("case_id"));
+            String inputHash = String.valueOf(observation.get("input_sha256"));
+            if (!firstHashByCase.containsKey(caseId)) firstHashByCase.put(caseId, inputHash);
+            if (!firstHashByCase.get(caseId).equals(inputHash)) return false;
+        }
+        return true;
+    }
+
+    private double rate(int numerator, int denominator) {
+        return denominator == 0 ? 0.0 : ((double) numerator) / denominator;
+    }
+
     private void configureComparisonCase(EngineAdminService service, String caseId) {
         if ("questionnaire-dynamic-field".equals(caseId)) {
             service.addField("questionnaire", new LinkedHashMap<String, Object>() {{
@@ -374,6 +582,51 @@ public final class ReproductionExperimentSuite {
     private long percentile(List<Long> sorted, double percentile) {
         int index = (int) Math.ceil(percentile * sorted.size()) - 1;
         return sorted.get(Math.max(0, Math.min(sorted.size() - 1, index)));
+    }
+
+    private List<String> spanNames(RuntimeRun run) {
+        List<String> names = new ArrayList<String>();
+        if (run == null || run.getTrace() == null || run.getTrace().getSpans() == null) return names;
+        for (cn.finalartical.reproduction.admin.TraceSpanRecord span : run.getTrace().getSpans()) {
+            names.add(span.getName());
+        }
+        return names;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void writeEvolutionCapabilitySvg(Map<String, Object> cases, Path output) throws IOException {
+        int width = 1080;
+        int rowHeight = 108;
+        int height = 90 + cases.size() * rowHeight;
+        StringBuilder svg = new StringBuilder();
+        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"").append(width)
+                .append("\" height=\"").append(height).append("\" viewBox=\"0 0 ")
+                .append(width).append(' ').append(height).append("\">");
+        svg.append("<rect width=\"100%\" height=\"100%\" fill=\"#101827\"/>");
+        svg.append("<text x=\"28\" y=\"38\" fill=\"#f5f7fb\" font-size=\"24\" font-family=\"Arial\">演化能力矩阵：通过次数与适应性增益（每案例 12 次）</text>");
+        int row = 0;
+        for (Map.Entry<String, Object> entry : cases.entrySet()) {
+            Map<String, Object> summary = (Map<String, Object>) entry.getValue();
+            int baseline = ((Number) summary.get("baseline_passed")).intValue();
+            int flexible = ((Number) summary.get("flexible_passed")).intValue();
+            int improved = ((Number) summary.get("outcome_improved_pairs")).intValue();
+            int y = 72 + row * rowHeight;
+            svg.append("<text x=\"28\" y=\"").append(y + 18).append("\" fill=\"#b9c5d6\" font-size=\"15\" font-family=\"Arial\">")
+                    .append(escapeXml(entry.getKey())).append("</text>");
+            svg.append("<rect x=\"300\" y=\"").append(y).append("\" width=\"").append(30 * baseline)
+                    .append("\" height=\"20\" rx=\"4\" fill=\"#e6a35c\"/>");
+            svg.append("<rect x=\"300\" y=\"").append(y + 30).append("\" width=\"").append(30 * flexible)
+                    .append("\" height=\"20\" rx=\"4\" fill=\"#63d7c6\"/>");
+            svg.append("<text x=\"680\" y=\"").append(y + 16).append("\" fill=\"#e6a35c\" font-size=\"14\" font-family=\"Arial\">baseline ")
+                    .append(baseline).append("/12</text>");
+            svg.append("<text x=\"680\" y=\"").append(y + 46).append("\" fill=\"#63d7c6\" font-size=\"14\" font-family=\"Arial\">flexible ")
+                    .append(flexible).append("/12</text>");
+            svg.append("<text x=\"820\" y=\"").append(y + 30).append("\" fill=\"#f5f7fb\" font-size=\"15\" font-family=\"Arial\">适应性增益 +")
+                    .append(improved).append(" 对</text>");
+            row++;
+        }
+        svg.append("</svg>");
+        Files.write(output, svg.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     @SuppressWarnings("unchecked")
@@ -523,6 +776,22 @@ public final class ReproductionExperimentSuite {
                     ((Map<String, Object>) summary.get("baseline_duration_ns")).get("p50"));
             appendCsv(csv, "D:" + entry.getKey(), "flexible_p50_ns",
                     ((Map<String, Object>) summary.get("flexible_duration_ns")).get("p50"));
+        }
+        Map<String, Object> evolution = (Map<String, Object>) report.get("E_evolution_capability_matrix");
+        Map<String, Object> evolutionCases = (Map<String, Object>) evolution.get("cases");
+        appendCsv(csv, "E", "comparable_pairs", evolution.get("comparable_pairs"));
+        appendCsv(csv, "E", "baseline_passed", evolution.get("baseline_passed"));
+        appendCsv(csv, "E", "flexible_passed", evolution.get("flexible_passed"));
+        appendCsv(csv, "E", "adaptation_gain_pairs", evolution.get("adaptation_gain_pairs"));
+        appendCsv(csv, "E", "adaptation_gain_rate", evolution.get("adaptation_gain_rate"));
+        appendCsv(csv, "E", "evidence_complete_pairs", evolution.get("evidence_complete_pairs"));
+        for (Map.Entry<String, Object> entry : evolutionCases.entrySet()) {
+            Map<String, Object> summary = (Map<String, Object>) entry.getValue();
+            appendCsv(csv, "E:" + entry.getKey(), "schema_migration_observations", summary.get("schema_migration_observations"));
+            appendCsv(csv, "E:" + entry.getKey(), "outcome_improved_pairs", summary.get("outcome_improved_pairs"));
+            appendCsv(csv, "E:" + entry.getKey(), "baseline_pass_rate", summary.get("baseline_pass_rate"));
+            appendCsv(csv, "E:" + entry.getKey(), "flexible_pass_rate", summary.get("flexible_pass_rate"));
+            appendCsv(csv, "E:" + entry.getKey(), "adaptation_gain_rate", summary.get("adaptation_gain_rate"));
         }
         Files.write(output, csv.toString().getBytes(StandardCharsets.UTF_8));
     }
