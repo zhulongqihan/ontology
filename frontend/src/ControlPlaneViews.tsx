@@ -171,7 +171,7 @@ function DecisionEvidence({ run }: { run: RuntimeRun }) {
 
 function MiniGraph({ run }: { run: RuntimeRun }) {
   const graph = normalizeGraph(run.ontologyGraph, [])
-  const positions = graphPositions(graph.nodes)
+  const positions = graphPositions(graph.nodes, 2)
   const width = Math.max(560, Math.ceil(graph.nodes.length / 2) * 220)
   const height = Math.max(230, Math.ceil(graph.nodes.length / 2) * 104)
   if (graph.nodes.length === 0) return <EmptyState title="本次运行没有图谱" description="只有带 ontology 输入且 Provider 成功装配的 Run 才会生成运行时图谱。" />
@@ -206,9 +206,9 @@ function normalizeGraph(raw: Record<string, unknown> | undefined, types: Ontolog
   return { nodes, edges, source: 'definition' }
 }
 
-function graphPositions(nodes: GraphNode[]) {
+function graphPositions(nodes: GraphNode[], columns = 3) {
   const positions = new Map<string, { x: number; y: number }>()
-  nodes.forEach((node, index) => positions.set(node.id, { x: 22 + (index % 3) * 220, y: 22 + Math.floor(index / 3) * 104 }))
+  nodes.forEach((node, index) => positions.set(node.id, { x: 22 + (index % columns) * 220, y: 22 + Math.floor(index / columns) * 104 }))
   return positions
 }
 
