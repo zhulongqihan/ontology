@@ -1,0 +1,191 @@
+{
+  "id" : "run-04043f81",
+  "modelId" : "interview-session",
+  "executionMode" : "FLEXIBLE_ENGINE",
+  "comparisonId" : null,
+  "pairedRunId" : null,
+  "caseId" : null,
+  "inputSha256" : "cfff71da18eaac87d62ee99216d7ebfeadcbe5352cc605a9ef3110afd0081c6d",
+  "configurationSha256" : "cf949acd3fc4780323321aa937bef1e7b1dfc2e0d4237440bec8b30f5315eba8",
+  "ontologyTypeId" : null,
+  "ontologyVersion" : 0,
+  "ontologyDefinitionSha256" : null,
+  "contextId" : "repeatable-context",
+  "engineVersion" : "0.3.0",
+  "schemaVersion" : 2,
+  "workflowVersion" : 1,
+  "status" : "PASSED",
+  "dataIdentity" : "ENGINE_RUNTIME_RESULT",
+  "event" : "startInterview",
+  "fromState" : "PENDING_INTERVIEW",
+  "toState" : "IN_INTERVIEW",
+  "traceId" : "trace-run-04043f81",
+  "createdAt" : "2026-09-03T09:00:33.653709900Z",
+  "durationNs" : 3542000,
+  "durationMs" : 3,
+  "idempotencyKey" : "repeatable-key",
+  "retryOfRunId" : null,
+  "replayOfRunId" : null,
+  "attempt" : 1,
+  "contextRevision" : 1,
+  "contextCommitted" : true,
+  "errorCode" : null,
+  "beforeSnapshot" : {
+    "phase" : "BEFORE",
+    "contextId" : "repeatable-context",
+    "modelId" : "interview-session",
+    "schemaVersion" : 2,
+    "workflowVersion" : 1,
+    "state" : "PENDING_INTERVIEW",
+    "status" : "CREATED",
+    "capturedAt" : "2026-09-03T09:00:33.653709900Z",
+    "values" : {
+      "remote" : false
+    },
+    "sha256" : "a4c15fe5c644d3f065261c11683bc96ff0226e8caf68201ea8e725032944e016"
+  },
+  "afterSnapshot" : {
+    "phase" : "AFTER",
+    "contextId" : "repeatable-context",
+    "modelId" : "interview-session",
+    "schemaVersion" : 2,
+    "workflowVersion" : 1,
+    "state" : "IN_INTERVIEW",
+    "status" : "PASSED",
+    "capturedAt" : "2026-09-03T09:00:33.659874Z",
+    "values" : {
+      "remote" : false,
+      "candidateName" : "repeatable"
+    },
+    "sha256" : "f872428384a188dd59929ffbf8a53e7b89dd3fce2b0597e66b9442df80058b81"
+  },
+  "trace" : {
+    "runId" : "run-04043f81",
+    "traceId" : "trace-run-04043f81",
+    "startedAt" : "2026-09-03T09:00:33.653709900Z",
+    "endedAt" : "2026-09-03T09:00:33.659874Z",
+    "durationNs" : 3542000,
+    "durationMs" : 3,
+    "status" : "PASSED",
+    "lifecycle" : "COMMITTED",
+    "sealed" : true,
+    "spans" : [ {
+      "spanId" : "span-bd61885d",
+      "traceId" : "trace-run-04043f81",
+      "name" : "request",
+      "startedAt" : "2026-09-03T09:00:33.653708100Z",
+      "endedAt" : "2026-09-03T09:00:33.653709900Z",
+      "durationNs" : 1800,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "modelId" : "interview-session",
+        "contextId" : "repeatable-context"
+      }
+    }, {
+      "spanId" : "span-48713504",
+      "traceId" : "trace-run-04043f81",
+      "name" : "validation",
+      "startedAt" : "2026-09-03T09:00:33.653690400Z",
+      "endedAt" : "2026-09-03T09:00:33.653709900Z",
+      "durationNs" : 19500,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "errorCount" : "0",
+        "schemaFromVersion" : "2",
+        "schemaToVersion" : "2",
+        "schemaMigrationApplied" : "false"
+      }
+    }, {
+      "spanId" : "span-b65883a7",
+      "traceId" : "trace-run-04043f81",
+      "name" : "workflow",
+      "startedAt" : "2026-09-03T09:00:33.653706600Z",
+      "endedAt" : "2026-09-03T09:00:33.653709900Z",
+      "durationNs" : 3300,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "event" : "startInterview",
+        "fromState" : "PENDING_INTERVIEW",
+        "toState" : "IN_INTERVIEW"
+      }
+    }, {
+      "spanId" : "span-37bad7bf",
+      "traceId" : "trace-run-04043f81",
+      "name" : "ontology",
+      "startedAt" : "2026-09-03T09:00:33.653708500Z",
+      "endedAt" : "2026-09-03T09:00:33.653709900Z",
+      "durationNs" : 1400,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "requested" : "false",
+        "rootType" : "none",
+        "bindingSource" : "none"
+      }
+    }, {
+      "spanId" : "span-4a812453",
+      "traceId" : "trace-run-04043f81",
+      "name" : "provider",
+      "startedAt" : "2026-09-03T09:00:33.653709900Z",
+      "endedAt" : "2026-09-03T09:00:33.653709900Z",
+      "durationNs" : 5200,
+      "durationMs" : 0,
+      "status" : "SKIPPED",
+      "attributes" : {
+        "serviceId" : "ontology-assembler",
+        "operation" : "assembleOntology",
+        "transport" : "IN_PROCESS",
+        "requestJson" : "{\"serviceId\":\"ontology-assembler\",\"operation\":\"assembleOntology\",\"modelId\":\"interview-session\",\"contextId\":\"repeatable-context\",\"values\":{\"remote\":false,\"candidateName\":\"repeatable\"},\"ontology\":null,\"ontologyTypeVersion\":0,\"ontologyDefinitionSha256\":null}",
+        "responseJson" : "null",
+        "ontologyTypeVersion" : "0",
+        "ontologyDefinitionSha256" : "null",
+        "objectCount" : "0",
+        "endpoint" : "local://ontology-assembler",
+        "provider" : "LocalOntologyProvider",
+        "version" : "v1",
+        "skipReason" : "ontology input not requested",
+        "durationNs" : "5200"
+      }
+    }, {
+      "spanId" : "span-131f5268",
+      "traceId" : "trace-run-04043f81",
+      "name" : "persistence",
+      "startedAt" : "2026-09-03T09:00:33.659866100Z",
+      "endedAt" : "2026-09-03T09:00:33.659874Z",
+      "durationNs" : 7900,
+      "durationMs" : 0,
+      "status" : "COMMITTED",
+      "attributes" : {
+        "contextCommitted" : "true",
+        "commitBoundary" : "repository.commit",
+        "commitObservedAt" : "2026-09-03T09:00:33.675505Z",
+        "commitRevision" : "2"
+      }
+    }, {
+      "spanId" : "span-d0ec5f3d",
+      "traceId" : "trace-run-04043f81",
+      "name" : "response",
+      "startedAt" : "2026-09-03T09:00:33.659873300Z",
+      "endedAt" : "2026-09-03T09:00:33.659874Z",
+      "durationNs" : 700,
+      "durationMs" : 0,
+      "status" : "PREPARED",
+      "attributes" : {
+        "deliveryBoundary" : "caller-observation"
+      }
+    } ]
+  },
+  "values" : {
+    "remote" : false,
+    "candidateName" : "repeatable"
+  },
+  "inputValues" : {
+    "candidateName" : "repeatable"
+  },
+  "ontologyGraph" : { },
+  "ontologyInput" : { },
+  "validationErrors" : [ ]
+}

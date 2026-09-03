@@ -1,0 +1,1 @@
+{"case_id":"C-14","capability":"linkage-config-save","scenario":"null","request_shape":"questionnaire_id=null;config=v1","expected_behavior":"INVALID_INPUT","raw_status":"INVALID_INPUT","actual_behavior":"INVALID_INPUT","trace_id":"trace-C-14","passed":true,"data_identity":"ENGINE_EXPERIMENT_RESULT"}

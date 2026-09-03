@@ -159,7 +159,7 @@ npm.cmd run dev
 }
 ```
 
-4. 在对比结果和“知识图谱”页面切换到新生成的 Flexible Run，核对 `RuntimeRun.ontologyGraph` 的对象数、关系数、root object、Trace 和 Snapshot。最终实验中的同类输入及 SVG/JSON 产物位于 `docs/实验证据/20260903_baseline_flexible_final/D/`。
+4. 在对比结果和“知识图谱”页面切换到新生成的 Flexible Run，核对 `RuntimeRun.ontologyGraph` 的对象数、关系数、root object、Trace 和 Snapshot。最终实验中的同类输入及 SVG/JSON 产物位于 `docs/实验证据/20260903_evolution_capability_final/D/`。
 
 该路径展示的是当前重构系统的本地、进程内运行证据；它不代表原生产系统的黑盒等价性、远程调用链或业务指标提升。
 
@@ -223,14 +223,14 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 
 当前验证基线：
 
-- Maven 多模块测试：90/90 通过。
+- Maven 多模块测试：91/91 通过。
 - `contract` 模式：20 条契约规格可执行并生成逐用例产物。
-- `experiments` 模式：A/B/C 机制、故障注入、重复性和消融实验可执行；3 个 seed 各 20/20 通过。
+- `experiments` 模式：A/B/C/D/E 机制、故障注入、重复性、消融、固定基线成对和 Schema 演化实验可执行；3 个 seed 各 20/20 通过；E 阶段 36 对可比运行中 24 对观察到“基线失败而柔性通过”，36/36 对证据完整。
 - SQLite 跨实例并发：一个写入者成功，另一个得到 revision conflict；重载后相同幂等请求返回已提交 Run。
 - 相同 seed 的契约运行可生成稳定报告哈希。
 - 前端 `npm.cmd run build` 通过。
 - 管理 API 的模型注册、字段写入、关系注册、服务注册、运行执行、快照/Trace/审计/幂等查询、重试回滚、SQLite 持久化和旧 JSON 迁移已完成实测。
-- 架构回归：90 个 Maven 测试通过；包含显式绑定、Ontology version/hash、双向基数、公开对象深拷贝、嵌套输入隔离、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match/CORS 预检、审计 revision 链、SQLite 事务、跨实例冲突、坏投影拒绝、坏 Snapshot/Trace 拒绝、历史 legacy 运行保留、重启后幂等和隔离 Replay、comparisonId 请求一致性，以及固定映射基线与 Flexible Engine 的成对执行身份、高分辨率耗时恢复和成对事务回滚。详见 [当前审查状态 v0.7](docs/审查状态_v0.7.md)。
+- 架构回归：91 个 Maven 测试通过；包含显式绑定、Ontology version/hash、双向基数、公开对象深拷贝、嵌套输入隔离、受控配置更新、字段级审计差异、HTTP 错误关联/ETag/If-Match/CORS 预检、审计 revision 链、SQLite 事务、跨实例冲突、坏投影拒绝、坏 Snapshot/Trace 拒绝、历史 legacy 运行保留、重启后幂等和隔离 Replay、comparisonId 请求一致性、字段重命名迁移适应性，以及固定映射基线与 Flexible Engine 的成对执行身份、高分辨率耗时恢复和成对事务回滚。详见 [当前审查状态 v0.7](docs/审查状态_v0.7.md)。
 
 ## 论文与系统边界
 
