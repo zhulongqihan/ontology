@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { engineApi, type AuditEvent, type EngineField, type EngineModel, type EngineOverview, type EngineTransition, type ExecutionSnapshot, type FieldType, type IdempotencyRecord, type OntologyType, type RuntimeRun, type ServiceRegistration, type TraceRecord } from './api'
+import { ComparisonView, ControlPlaneJourney, KnowledgeGraphView } from './ControlPlaneViews'
 
-type ViewKey = 'overview' | 'models' | 'schema' | 'workflow' | 'ontology' | 'services' | 'runtime' | 'evidence'
+type ViewKey = 'overview' | 'models' | 'schema' | 'workflow' | 'ontology' | 'graph' | 'services' | 'runtime' | 'evidence' | 'compare'
 
 const navigation: Array<{ key: ViewKey; label: string; detail: string; mark: string }> = [
   { key: 'overview', label: '引擎总览', detail: '控制面状态', mark: '◎' },
@@ -9,9 +10,11 @@ const navigation: Array<{ key: ViewKey; label: string; detail: string; mark: str
   { key: 'schema', label: 'Schema / 字段', detail: '动态结构版本', mark: '▦' },
   { key: 'workflow', label: '工作流', detail: '状态与事件', mark: '↗' },
   { key: 'ontology', label: '本体模型', detail: '对象与关系', mark: '◈' },
+  { key: 'graph', label: '知识图谱', detail: '定义与运行路径', mark: '⌬' },
   { key: 'services', label: '服务注册', detail: 'Provider / Consumer', mark: '⌘' },
   { key: 'runtime', label: '运行调试', detail: '输入与快照', mark: '▶' },
   { key: 'evidence', label: '证据中心', detail: 'Trace / 审计 / 导出', mark: '⌁' },
+  { key: 'compare', label: '对比分析', detail: '成对 Run 观察', mark: '⇄' },
 ]
 
 function App() {
@@ -133,9 +136,11 @@ function App() {
           {activeView === 'schema' && selectedModel && <SchemaView model={selectedModel} onAdd={(payload) => afterMutation(() => engineApi.addField(selectedModel.id, payload), '字段已写入引擎 Schema')} />}
           {activeView === 'workflow' && selectedModel && <WorkflowView model={selectedModel} onAdd={(payload) => afterMutation(() => engineApi.addTransition(selectedModel.id, payload), '状态转换已写入工作流')} />}
           {activeView === 'ontology' && <OntologyView types={ontologyTypes} onAdd={(payload) => afterMutation(() => engineApi.addOntologyType(payload), '本体类型已写入模型注册表')} onAddRelation={(typeId, payload) => afterMutation(() => engineApi.addOntologyRelation(typeId, payload), '本体关系已写入对象模型')} />}
+          {activeView === 'graph' && <KnowledgeGraphView types={ontologyTypes} runs={runs} />}
           {activeView === 'services' && <ServicesView services={services} onAdd={(payload) => afterMutation(() => engineApi.addService(payload), '服务已写入本地注册表')} />}
           {activeView === 'runtime' && selectedModel && <RuntimeView models={models} selectedModel={selectedModel} runs={runs} onExecute={async (payload) => { const run = await engineApi.execute(payload); await refresh(); showNotice('运行已完成，结果已持久化'); return run }} />}
           {activeView === 'evidence' && <EvidenceView runs={runs} models={models} auditEvents={auditEvents} idempotencyRecords={idempotencyRecords} onRetry={(runId) => afterMutation(() => engineApi.retry(runId), '已创建新的重试运行')} onReplay={(runId) => afterMutation(() => engineApi.replay(runId), '已创建隔离重放运行')} onRollback={(runId) => afterMutation(() => engineApi.rollback(runId), '已创建回滚运行')} onExport={downloadExport} />}
+          {activeView === 'compare' && <ComparisonView models={models} runs={runs} />}
         </div>
       </main>
       {notice && <div className="toast" role="status">{notice}</div>}
@@ -158,6 +163,7 @@ function PageIntro({ eyebrow, title, description, action }: { eyebrow: string; t
 function OverviewView({ overview, runs, onNavigate, onRefresh }: { overview: EngineOverview; runs: RuntimeRun[]; onNavigate: (view: ViewKey) => void; onRefresh: () => void }) {
   return <>
     <PageIntro eyebrow="FLEXIBLE ENGINE / CONTROL PLANE" title="引擎总览" description="从这里管理柔性对象模型、动态 Schema、状态流程和本体关系。所有写操作都会进入本地引擎状态并可再次运行。" action={<button type="button" className="primary-button" onClick={onRefresh}><span>↻</span> 刷新状态</button>} />
+    <ControlPlaneJourney onNavigate={onNavigate} />
     <section className="engine-banner"><div className="banner-main"><span className="status-orb" /><div><span>当前引擎</span><strong>{overview.engine.name}</strong></div><StatusPill status="READY" /></div><div className="banner-meta"><span>版本 <code>{overview.engine.version}</code></span><span>运行数据 <b>{overview.engine.dataIdentity}</b></span><span>更新 <code>{formatTime(overview.engine.updatedAt)}</code></span></div></section>
     <section className="metric-strip" aria-label="引擎资源摘要"><Metric label="对象模型" value={overview.counts.models} note="可管理模型" tone="teal" /><Metric label="动态字段" value={overview.counts.fields} note="跨模型 Schema" tone="ink" /><Metric label="本体类型" value={overview.counts.ontologyTypes} note="对象与关系" tone="purple" /><Metric label="运行快照" value={overview.counts.runs} note="本地持久化" tone="amber" /></section>
     <div className="overview-grid"><section className="panel model-overview"><PanelHeading kicker="MODEL REGISTRY" title="模型注册表" action={<button type="button" className="text-button" onClick={() => onNavigate('models')}>管理模型 →</button>} /><div className="model-list">{overview.models.map((model) => <button type="button" className="model-list-row" key={model.id} onClick={() => onNavigate('models')}><span className="model-type">M</span><span className="model-copy"><strong>{model.name}</strong><small>{model.id} · v{model.schemaVersion}</small></span><span className="model-stats">{model.fields.length} fields<br />{model.transitions.length} transitions</span><span className="row-arrow">→</span></button>)}</div></section><section className="panel capability-panel"><PanelHeading kicker="ENGINE CAPABILITIES" title="已启用能力" /><div className="capability-list">{overview.capabilities.map((capability) => <div className="capability-row" key={capability}><span className="status-dot success" /><code>{capability}</code><span>READY</span></div>)}</div></section></div>

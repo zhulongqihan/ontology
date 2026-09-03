@@ -45,7 +45,7 @@ Provider / Consumer 兼容调用
 - 运行证据：每次运行固定引擎、Schema、Workflow 版本，保存独立 RuntimeContext、before/after Snapshot、SHA-256、Trace Span、幂等记录和错误原因。
 - 运行控制：失败 Run 可生成新的 attempt 重试，成功 Run 可在上下文仍处于其最新 revision 时生成可审计的回滚 Run；两者都保留原始运行链路。
 - 状态持久化：配置和运行历史默认保存到 SQLite `data/flexible-engine.db`；配置域同步写入模型、Schema、Workflow、本体和服务规范化表，运行域事实同步写入 `runtime_context`、`runtime_run`、`execution_snapshot`、`trace`、`trace_span`、`audit_event` 和 `idempotency_record` 表，重启后重新加载；备份恢复会先校验临时副本再原子替换。
-- 控制面前端：引擎总览、模型管理、Schema/字段、工作流、本体模型、服务注册和运行调试。
+- 控制面前端：引擎总览、模型管理、Schema/字段、工作流、本体模型、知识图谱、服务注册和运行调试；运行证据页提供 Trace/Snapshot/Audit/Replay，成对运行页提供真实 Run 的条件一致性检查、调用链和结构化决策证据观察。
 - 契约回归：20 条接口契约规格、逐用例结果、由真实 Provider 调用测量生成的封存 Trace、报告和哈希输出。
 - 架构边界：管理读取结果全部深拷贝；关系和服务状态只能通过受控、审计化命令更新，避免 DTO 嵌套对象绕过版本和持久化。
 - HTTP 并发与错误协议：响应返回 `ETag` 和 `X-Trace-Id`，条件写入支持 `If-Match`；错误统一包含 `errorCode`、`message` 和 `traceId`。
@@ -58,7 +58,8 @@ Provider / Consumer 兼容调用
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │                 React / Vite Engine Control Plane            │
-│  Overview · Models · Schema · Workflow · Ontology · Runtime   │
+│  Overview · Models · Schema · Workflow · Ontology · Graph     │
+│  Runtime · Evidence · Paired Run Observation                  │
 └───────────────────────────────┬──────────────────────────────┘
                                 │ HTTP JSON
 ┌───────────────────────────────▼──────────────────────────────┐
@@ -87,7 +88,7 @@ Provider / Consumer 兼容调用
 | `engine-persistence` | SQLite 事务持久化、JSON 迁移和状态写入审计 | `SqliteEngineStateRepository` |
 | `experiment-runner` | 20 条契约规格的可重复回归执行 | `ContractExperimentRunner` |
 | `reproduction-app` | fat jar 启动入口 | `ReproductionApplication` |
-| `frontend` | 中文后台控制面 | `App.tsx`、`api.ts` |
+| `frontend` | 中文引擎控制面、知识图谱与成对运行观察 | `App.tsx`、`ControlPlaneViews.tsx`、`api.ts` |
 
 ## 快速运行
 
@@ -133,6 +134,8 @@ npm.cmd run dev
 打开 [http://127.0.0.1:5174/](http://127.0.0.1:5174/)。
 
 控制面中的新增模型、动态字段、状态转换、本体关系、服务注册和运行快照都会进入本地引擎状态，而不是只改变浏览器内存。SQLite 写入在事务中完成，并保留状态写入审计记录；旧 JSON 只作为迁移入口，不再是默认运行仓库。
+
+控制面首页按“定义模型 → 绑定本体 → 真实运行 → 复核证据”组织操作。知识图谱页面区分注册的本体定义和真实 Run 的 `ontologyGraph`；成对运行页面读取两个真实 Run 的持久化证据并检查输入条件是否一致。当前后端尚未接入可执行的 `Rigid Mapping Baseline`，因此该页面显示为 `PAIRED OBSERVATION`，不能把同一柔性引擎的两次运行写成 Before/After 提升。
 
 ## 管理 API
 
@@ -222,8 +225,9 @@ java -jar reproduction-app\target\reproduction-app-0.1.0-SNAPSHOT.jar contract
 - 跨类型转换、Schema 版本回滚和更细粒度的兼容策略。
 - 更细粒度的重试策略配置、远程 Provider 超时与跨部署环境的并发恢复。
 - 跨进程/跨服务的请求—响应—Provider 调用链；当前已完成本地 in-process Provider 的真实观测，不能把它等同于生产网络调用链。
+- 可执行的 `Rigid Mapping Baseline` 和成对实验元数据；当前成对运行页面只提供真实 Run 的条件检查与证据观察，不自动生成基线结果。
 - 本体关系装配的更多跨类型、跨服务和兼容场景。
-- 将控制面导出升级为带格式版本的论文实验支撑层，并与引擎领域数据保持清晰边界。
+- 将知识图谱、调用链和结构化决策证据导出升级为带格式版本的论文实验支撑层，并与引擎领域数据保持清晰边界。
 
 历史 JSON/SQLite 记录若生成于证据字段加入前，会保留为历史记录但显示为“旧记录/证据不完整”，不会被回填为当前运行结果。
 
