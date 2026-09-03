@@ -1,0 +1,1 @@
+{"case_id":"C-17","capability":"interview-session-detail","scenario":"normal","request_shape":"questionnaire_id=q-001","expected_behavior":"SUCCESS","raw_status":"SUCCESS","actual_behavior":"SUCCESS","trace_id":"trace-C-17","passed":true,"data_identity":"ENGINE_EXPERIMENT_RESULT"}

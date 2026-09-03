@@ -1,0 +1,218 @@
+{
+  "id" : "run-d100d7f3",
+  "modelId" : "questionnaire",
+  "executionMode" : "FLEXIBLE_ENGINE",
+  "comparisonId" : null,
+  "pairedRunId" : null,
+  "caseId" : null,
+  "inputSha256" : "43fdef568d742350fd7e17c456698154251430720b524d72b6237d8b1d85e983",
+  "configurationSha256" : "5b0178271c7bc357a5f2fd59d56e0d3d5192f5d0697c75270f930f899ca09107",
+  "ontologyTypeId" : "questionnaire",
+  "ontologyVersion" : 1,
+  "ontologyDefinitionSha256" : "b9026d86ec2d241422f8a047146aa8f319d69ce3184c979b2ad03ce997c0daad",
+  "contextId" : "fault-provider",
+  "engineVersion" : "0.3.0",
+  "schemaVersion" : 2,
+  "workflowVersion" : 1,
+  "status" : "FAILED",
+  "dataIdentity" : "ENGINE_RUNTIME_RESULT",
+  "event" : "publish",
+  "fromState" : "DRAFT",
+  "toState" : "DRAFT",
+  "traceId" : "trace-run-d100d7f3",
+  "createdAt" : "2026-09-03T07:29:25.674515100Z",
+  "durationNs" : 3766500,
+  "durationMs" : 3,
+  "idempotencyKey" : null,
+  "retryOfRunId" : null,
+  "replayOfRunId" : null,
+  "attempt" : 1,
+  "contextRevision" : 0,
+  "contextCommitted" : false,
+  "errorCode" : "ONTOLOGY_ASSEMBLY_ERROR",
+  "beforeSnapshot" : {
+    "phase" : "BEFORE",
+    "contextId" : "fault-provider",
+    "modelId" : "questionnaire",
+    "schemaVersion" : 2,
+    "workflowVersion" : 1,
+    "state" : "DRAFT",
+    "status" : "CREATED",
+    "capturedAt" : "2026-09-03T07:29:25.674515100Z",
+    "values" : {
+      "subjectCount" : 0
+    },
+    "sha256" : "263fa94d491fbec0e97ee79bdc614c19b333062caea890e5671e7952bfd923dc"
+  },
+  "afterSnapshot" : {
+    "phase" : "AFTER",
+    "contextId" : "fault-provider",
+    "modelId" : "questionnaire",
+    "schemaVersion" : 2,
+    "workflowVersion" : 1,
+    "state" : "DRAFT",
+    "status" : "FAILED",
+    "capturedAt" : "2026-09-03T07:29:25.674515100Z",
+    "values" : {
+      "subjectCount" : 0,
+      "name" : "实验问卷",
+      "subjectId" : "s-001",
+      "subjects" : [ {
+        "id" : "s-001",
+        "title" : "集合",
+        "options" : [ {
+          "id" : "o-001",
+          "label" : "List"
+        } ]
+      } ]
+    },
+    "sha256" : "355f7d6583e141245853b84af567e76a75b3c32120aa646dec215b4132b3ac5b"
+  },
+  "trace" : {
+    "runId" : "run-d100d7f3",
+    "traceId" : "trace-run-d100d7f3",
+    "startedAt" : "2026-09-03T07:29:25.674515100Z",
+    "endedAt" : "2026-09-03T07:29:25.674515100Z",
+    "durationNs" : 3766500,
+    "durationMs" : 3,
+    "status" : "FAILED",
+    "lifecycle" : "COMMITTED",
+    "sealed" : true,
+    "spans" : [ {
+      "spanId" : "span-4d2538f3",
+      "traceId" : "trace-run-d100d7f3",
+      "name" : "request",
+      "startedAt" : "2026-09-03T07:29:25.674512900Z",
+      "endedAt" : "2026-09-03T07:29:25.674515100Z",
+      "durationNs" : 2200,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "modelId" : "questionnaire",
+        "contextId" : "fault-provider"
+      }
+    }, {
+      "spanId" : "span-e8b025a0",
+      "traceId" : "trace-run-d100d7f3",
+      "name" : "validation",
+      "startedAt" : "2026-09-03T07:29:25.674490800Z",
+      "endedAt" : "2026-09-03T07:29:25.674515100Z",
+      "durationNs" : 24300,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "errorCount" : "0",
+        "schemaFromVersion" : "2",
+        "schemaToVersion" : "2",
+        "schemaMigrationApplied" : "false"
+      }
+    }, {
+      "spanId" : "span-4b6697f8",
+      "traceId" : "trace-run-d100d7f3",
+      "name" : "workflow",
+      "startedAt" : "2026-09-03T07:29:25.674511500Z",
+      "endedAt" : "2026-09-03T07:29:25.674515100Z",
+      "durationNs" : 3600,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "event" : "publish",
+        "fromState" : "DRAFT",
+        "toState" : "PUBLISHED"
+      }
+    }, {
+      "spanId" : "span-fb62e9dc",
+      "traceId" : "trace-run-d100d7f3",
+      "name" : "ontology",
+      "startedAt" : "2026-09-03T07:29:25.674513400Z",
+      "endedAt" : "2026-09-03T07:29:25.674515100Z",
+      "durationNs" : 1700,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "requested" : "true",
+        "rootType" : "questionnaire",
+        "bindingSource" : "model.ontologyTypeId"
+      }
+    }, {
+      "spanId" : "span-9d6216c3",
+      "traceId" : "trace-run-d100d7f3",
+      "name" : "provider",
+      "startedAt" : "2026-09-03T07:29:25.674515100Z",
+      "endedAt" : "2026-09-03T07:29:25.674515100Z",
+      "durationNs" : 26100,
+      "durationMs" : 0,
+      "status" : "FAILED",
+      "attributes" : {
+        "serviceId" : "ontology-assembler",
+        "operation" : "assembleOntology",
+        "transport" : "IN_PROCESS",
+        "requestJson" : "{\"serviceId\":\"ontology-assembler\",\"operation\":\"assembleOntology\",\"modelId\":\"questionnaire\",\"contextId\":\"fault-provider\",\"values\":{\"subjectCount\":0,\"name\":\"实验问卷\",\"subjectId\":\"s-001\",\"subjects\":[{\"id\":\"s-001\",\"title\":\"集合\",\"options\":[{\"id\":\"o-001\",\"label\":\"List\"}]}]},\"ontology\":null,\"ontologyTypeVersion\":1,\"ontologyDefinitionSha256\":\"b9026d86ec2d241422f8a047146aa8f319d69ce3184c979b2ad03ce997c0daad\"}",
+        "responseJson" : "null",
+        "ontologyTypeVersion" : "1",
+        "ontologyDefinitionSha256" : "b9026d86ec2d241422f8a047146aa8f319d69ce3184c979b2ad03ce997c0daad",
+        "objectCount" : "0",
+        "endpoint" : "local://ontology-assembler",
+        "provider" : "LocalOntologyProvider",
+        "version" : "v1",
+        "error" : "ontology-assembler provider is not ready: DOWN",
+        "durationNs" : "26100"
+      }
+    }, {
+      "spanId" : "span-78872532",
+      "traceId" : "trace-run-d100d7f3",
+      "name" : "persistence",
+      "startedAt" : "2026-09-03T07:29:25.674514Z",
+      "endedAt" : "2026-09-03T07:29:25.674515100Z",
+      "durationNs" : 1100,
+      "durationMs" : 0,
+      "status" : "COMMITTED",
+      "attributes" : {
+        "contextCommitted" : "false",
+        "commitBoundary" : "repository.commit",
+        "commitObservedAt" : "2026-09-03T07:29:25.689750800Z",
+        "commitRevision" : "4"
+      }
+    }, {
+      "spanId" : "span-518b0805",
+      "traceId" : "trace-run-d100d7f3",
+      "name" : "response",
+      "startedAt" : "2026-09-03T07:29:25.674514500Z",
+      "endedAt" : "2026-09-03T07:29:25.674515100Z",
+      "durationNs" : 600,
+      "durationMs" : 0,
+      "status" : "PREPARED",
+      "attributes" : {
+        "deliveryBoundary" : "caller-observation"
+      }
+    } ]
+  },
+  "values" : {
+    "subjectCount" : 0,
+    "name" : "实验问卷",
+    "subjectId" : "s-001",
+    "subjects" : [ {
+      "id" : "s-001",
+      "title" : "集合",
+      "options" : [ {
+        "id" : "o-001",
+        "label" : "List"
+      } ]
+    } ]
+  },
+  "inputValues" : {
+    "name" : "实验问卷",
+    "subjectId" : "s-001",
+    "subjects" : [ {
+      "id" : "s-001",
+      "title" : "集合",
+      "options" : [ {
+        "id" : "o-001",
+        "label" : "List"
+      } ]
+    } ]
+  },
+  "ontologyGraph" : { },
+  "ontologyInput" : null,
+  "validationErrors" : [ "ontology-assembler provider is not ready: DOWN" ]
+}

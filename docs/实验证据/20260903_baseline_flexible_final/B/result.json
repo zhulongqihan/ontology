@@ -1,0 +1,13 @@
+{
+  "repository" : "SQLite",
+  "failure_injection_point" : "after_runtime_projection_before_commit",
+  "persistence_failure" : true,
+  "persistence_failure_run_count_before" : 0,
+  "persistence_failure_run_count_after_restart" : 0,
+  "persistence_failure_atomic" : true,
+  "provider_outage_status" : "FAILED",
+  "provider_outage_error" : "ONTOLOGY_ASSEMBLY_ERROR",
+  "retry_status_after_recovery" : "PASSED",
+  "retry_of_run_id" : "run-d100d7f3",
+  "retry_recovered" : true
+}

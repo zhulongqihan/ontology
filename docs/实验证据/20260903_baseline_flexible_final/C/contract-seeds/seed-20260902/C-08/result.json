@@ -1,0 +1,1 @@
+{"case_id":"C-08","capability":"subject-questionnaire-query","scenario":"invalid","request_shape":"subject_id=!invalid","expected_behavior":"INVALID_INPUT","raw_status":"INVALID_INPUT","actual_behavior":"INVALID_INPUT","trace_id":"trace-C-08","passed":true,"data_identity":"ENGINE_EXPERIMENT_RESULT"}

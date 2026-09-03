@@ -1,0 +1,214 @@
+{
+  "id" : "run-54d7d6fd",
+  "modelId" : "assessment-unbound",
+  "executionMode" : "FLEXIBLE_ENGINE",
+  "comparisonId" : null,
+  "pairedRunId" : null,
+  "caseId" : null,
+  "inputSha256" : "846da84b535a72163fe280ab159486dd2377106fd3debd38420d2a928244d671",
+  "configurationSha256" : "09e396b1d41fa3a783f00bd419a800db08452c4681e8584981ea3af526cc715e",
+  "ontologyTypeId" : null,
+  "ontologyVersion" : 0,
+  "ontologyDefinitionSha256" : null,
+  "contextId" : "ablation",
+  "engineVersion" : "0.3.0",
+  "schemaVersion" : 4,
+  "workflowVersion" : 2,
+  "status" : "FAILED",
+  "dataIdentity" : "ENGINE_RUNTIME_RESULT",
+  "event" : "publish",
+  "fromState" : "DRAFT",
+  "toState" : "DRAFT",
+  "traceId" : "trace-run-54d7d6fd",
+  "createdAt" : "2026-09-03T07:29:26.358501900Z",
+  "durationNs" : 2964500,
+  "durationMs" : 2,
+  "idempotencyKey" : null,
+  "retryOfRunId" : null,
+  "replayOfRunId" : null,
+  "attempt" : 1,
+  "contextRevision" : 0,
+  "contextCommitted" : false,
+  "errorCode" : "ONTOLOGY_ASSEMBLY_ERROR",
+  "beforeSnapshot" : {
+    "phase" : "BEFORE",
+    "contextId" : "ablation",
+    "modelId" : "assessment-unbound",
+    "schemaVersion" : 4,
+    "workflowVersion" : 2,
+    "state" : "DRAFT",
+    "status" : "CREATED",
+    "capturedAt" : "2026-09-03T07:29:26.358501900Z",
+    "values" : { },
+    "sha256" : "6c08381800a12453292e1a188bc17f67fe3df1b134d536e2e01dab46a033b191"
+  },
+  "afterSnapshot" : {
+    "phase" : "AFTER",
+    "contextId" : "ablation",
+    "modelId" : "assessment-unbound",
+    "schemaVersion" : 4,
+    "workflowVersion" : 2,
+    "state" : "DRAFT",
+    "status" : "FAILED",
+    "capturedAt" : "2026-09-03T07:29:26.359500400Z",
+    "values" : {
+      "name" : "实验问卷",
+      "subjectId" : "s-001",
+      "subjects" : [ {
+        "id" : "s-001",
+        "title" : "集合",
+        "options" : [ {
+          "id" : "o-001",
+          "label" : "List"
+        } ]
+      } ]
+    },
+    "sha256" : "8bb170c9999e39b8431b9a666f2ccb0ccb881107b6472aa132a50069891e4ff7"
+  },
+  "trace" : {
+    "runId" : "run-54d7d6fd",
+    "traceId" : "trace-run-54d7d6fd",
+    "startedAt" : "2026-09-03T07:29:26.358501900Z",
+    "endedAt" : "2026-09-03T07:29:26.359500400Z",
+    "durationNs" : 2964500,
+    "durationMs" : 2,
+    "status" : "FAILED",
+    "lifecycle" : "COMMITTED",
+    "sealed" : true,
+    "spans" : [ {
+      "spanId" : "span-59decd10",
+      "traceId" : "trace-run-54d7d6fd",
+      "name" : "request",
+      "startedAt" : "2026-09-03T07:29:26.358499900Z",
+      "endedAt" : "2026-09-03T07:29:26.358501900Z",
+      "durationNs" : 2000,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "modelId" : "assessment-unbound",
+        "contextId" : "ablation"
+      }
+    }, {
+      "spanId" : "span-b2f93a81",
+      "traceId" : "trace-run-54d7d6fd",
+      "name" : "validation",
+      "startedAt" : "2026-09-03T07:29:26.359481400Z",
+      "endedAt" : "2026-09-03T07:29:26.359500400Z",
+      "durationNs" : 19000,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "errorCount" : "0",
+        "schemaFromVersion" : "4",
+        "schemaToVersion" : "4",
+        "schemaMigrationApplied" : "false"
+      }
+    }, {
+      "spanId" : "span-38082a31",
+      "traceId" : "trace-run-54d7d6fd",
+      "name" : "workflow",
+      "startedAt" : "2026-09-03T07:29:26.359497200Z",
+      "endedAt" : "2026-09-03T07:29:26.359500400Z",
+      "durationNs" : 3200,
+      "durationMs" : 0,
+      "status" : "OK",
+      "attributes" : {
+        "event" : "publish",
+        "fromState" : "DRAFT",
+        "toState" : "PUBLISHED"
+      }
+    }, {
+      "spanId" : "span-1a610b5d",
+      "traceId" : "trace-run-54d7d6fd",
+      "name" : "ontology",
+      "startedAt" : "2026-09-03T07:29:26.359485200Z",
+      "endedAt" : "2026-09-03T07:29:26.359500400Z",
+      "durationNs" : 15200,
+      "durationMs" : 0,
+      "status" : "FAILED",
+      "attributes" : {
+        "requested" : "true",
+        "rootType" : "null",
+        "bindingSource" : "model.ontologyTypeId"
+      }
+    }, {
+      "spanId" : "span-df661923",
+      "traceId" : "trace-run-54d7d6fd",
+      "name" : "provider",
+      "startedAt" : "2026-09-03T07:29:26.359500400Z",
+      "endedAt" : "2026-09-03T07:29:26.359500400Z",
+      "durationNs" : 4100,
+      "durationMs" : 0,
+      "status" : "SKIPPED",
+      "attributes" : {
+        "serviceId" : "ontology-assembler",
+        "operation" : "assembleOntology",
+        "transport" : "IN_PROCESS",
+        "requestJson" : "{\"serviceId\":\"ontology-assembler\",\"operation\":\"assembleOntology\",\"modelId\":\"assessment-unbound\",\"contextId\":\"ablation\",\"values\":{\"name\":\"实验问卷\",\"subjectId\":\"s-001\",\"subjects\":[{\"id\":\"s-001\",\"title\":\"集合\",\"options\":[{\"id\":\"o-001\",\"label\":\"List\"}]}]},\"ontology\":null,\"ontologyTypeVersion\":0,\"ontologyDefinitionSha256\":null}",
+        "responseJson" : "null",
+        "ontologyTypeVersion" : "0",
+        "ontologyDefinitionSha256" : "null",
+        "objectCount" : "0",
+        "endpoint" : "local://ontology-assembler",
+        "provider" : "LocalOntologyProvider",
+        "version" : "v1",
+        "skipReason" : "previous stage failed",
+        "durationNs" : "4100"
+      }
+    }, {
+      "spanId" : "span-37d103b7",
+      "traceId" : "trace-run-54d7d6fd",
+      "name" : "persistence",
+      "startedAt" : "2026-09-03T07:29:26.359499200Z",
+      "endedAt" : "2026-09-03T07:29:26.359500400Z",
+      "durationNs" : 1200,
+      "durationMs" : 0,
+      "status" : "COMMITTED",
+      "attributes" : {
+        "contextCommitted" : "false",
+        "commitBoundary" : "repository.commit",
+        "commitObservedAt" : "2026-09-03T07:29:26.372487600Z",
+        "commitRevision" : "7"
+      }
+    }, {
+      "spanId" : "span-5a699f03",
+      "traceId" : "trace-run-54d7d6fd",
+      "name" : "response",
+      "startedAt" : "2026-09-03T07:29:26.359499900Z",
+      "endedAt" : "2026-09-03T07:29:26.359500400Z",
+      "durationNs" : 500,
+      "durationMs" : 0,
+      "status" : "PREPARED",
+      "attributes" : {
+        "deliveryBoundary" : "caller-observation"
+      }
+    } ]
+  },
+  "values" : {
+    "name" : "实验问卷",
+    "subjectId" : "s-001",
+    "subjects" : [ {
+      "id" : "s-001",
+      "title" : "集合",
+      "options" : [ {
+        "id" : "o-001",
+        "label" : "List"
+      } ]
+    } ]
+  },
+  "inputValues" : {
+    "name" : "实验问卷",
+    "subjectId" : "s-001",
+    "subjects" : [ {
+      "id" : "s-001",
+      "title" : "集合",
+      "options" : [ {
+        "id" : "o-001",
+        "label" : "List"
+      } ]
+    } ]
+  },
+  "ontologyGraph" : { },
+  "ontologyInput" : null,
+  "validationErrors" : [ "model has no explicit ontology binding: assessment-unbound" ]
+}

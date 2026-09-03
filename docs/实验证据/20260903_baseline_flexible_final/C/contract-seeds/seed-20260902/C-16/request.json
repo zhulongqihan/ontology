@@ -1,0 +1,1 @@
+{"trace_id":"trace-C-16","capability":"linkage-config-save","scenario":"invalid","request_shape":"questionnaire_id=!invalid;config=v1","arguments":{"questionnaire_id":"!invalid","config":"v1"}}

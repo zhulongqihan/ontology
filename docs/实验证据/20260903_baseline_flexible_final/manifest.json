@@ -1,0 +1,11 @@
+{
+  "suite_id" : "reproduction-abcd",
+  "data_identity" : "ENGINE_EXPERIMENT_RESULT",
+  "source_revision" : "badc7fc",
+  "java_version" : "17.0.16",
+  "os" : "Windows 11 10.0",
+  "contract_case_file" : "F:\\finalartical\\flexible-ontology-reproduction\\experiments\\contract-20\\contract-20.csv",
+  "contract_case_count" : 20,
+  "seeds" : [ 20260902, 20260903, 20260904 ],
+  "rebuild_command" : "mvn -q clean package; java -jar reproduction-app/target/reproduction-app-0.1.0-SNAPSHOT.jar experiments <contract.csv> <output>"
+}

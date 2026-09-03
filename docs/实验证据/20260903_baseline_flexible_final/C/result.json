@@ -1,0 +1,35 @@
+{
+  "repository" : "SQLite",
+  "idempotent_repetitions" : 10,
+  "idempotent_unique_persisted_runs_after_restart" : 1,
+  "idempotent_same_returned_run" : true,
+  "restart_preserved_idempotency" : true,
+  "contract_repetitions" : [ {
+    "seed" : 20260902,
+    "total" : 20,
+    "passed" : 20,
+    "failed" : 0,
+    "execution_order" : [ "C-12", "C-10", "C-06", "C-02", "C-13", "C-08", "C-11", "C-16", "C-15", "C-19", "C-18", "C-20", "C-01", "C-09", "C-07", "C-03", "C-04", "C-17", "C-14", "C-05" ]
+  }, {
+    "seed" : 20260903,
+    "total" : 20,
+    "passed" : 20,
+    "failed" : 0,
+    "execution_order" : [ "C-17", "C-04", "C-03", "C-02", "C-01", "C-13", "C-06", "C-11", "C-18", "C-09", "C-07", "C-15", "C-19", "C-14", "C-16", "C-12", "C-20", "C-05", "C-08", "C-10" ]
+  }, {
+    "seed" : 20260904,
+    "total" : 20,
+    "passed" : 20,
+    "failed" : 0,
+    "execution_order" : [ "C-08", "C-02", "C-14", "C-04", "C-10", "C-07", "C-17", "C-06", "C-16", "C-05", "C-20", "C-13", "C-11", "C-12", "C-15", "C-19", "C-03", "C-01", "C-09", "C-18" ]
+  } ],
+  "contract_outcome_stable_across_seeds" : true,
+  "same_seed_report_stable" : true,
+  "ablation" : {
+    "without_explicit_binding" : {
+      "status" : "FAILED",
+      "error_code" : "ONTOLOGY_ASSEMBLY_ERROR",
+      "rejected" : true
+    }
+  }
+}

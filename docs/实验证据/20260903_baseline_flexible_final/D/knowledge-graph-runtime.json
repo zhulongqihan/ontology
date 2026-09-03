@@ -1,0 +1,44 @@
+{
+  "rootObjectId" : "ctx-cmp-questionnaire-knowledge-graph-1-flexible",
+  "objects" : [ {
+    "id" : "ctx-cmp-questionnaire-knowledge-graph-1-flexible",
+    "type" : "questionnaire",
+    "attributes" : {
+      "subjectCount" : 1,
+      "name" : "实验问卷-questionnaire-knowledge-graph",
+      "subjectId" : "s-001",
+      "subjects" : [ {
+        "id" : "s-001",
+        "title" : "集合",
+        "options" : [ {
+          "id" : "o-001",
+          "label" : "List"
+        } ]
+      } ],
+      "subject.s-001.title" : "集合",
+      "subject.s-001.optionCount" : 1
+    }
+  }, {
+    "id" : "s-001",
+    "type" : "subject",
+    "attributes" : {
+      "title" : "集合",
+      "optionCount" : 1
+    }
+  }, {
+    "id" : "o-001",
+    "type" : "option",
+    "attributes" : {
+      "label" : "List"
+    }
+  } ],
+  "relations" : [ {
+    "sourceId" : "ctx-cmp-questionnaire-knowledge-graph-1-flexible",
+    "relation" : "containsSubject",
+    "targetId" : "s-001"
+  }, {
+    "sourceId" : "s-001",
+    "relation" : "subjectContainsOption",
+    "targetId" : "o-001"
+  } ]
+}

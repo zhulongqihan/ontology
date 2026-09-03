@@ -1,0 +1,1 @@
+{"trace_id":"trace-C-19","status":"SUCCESS","message":"ok","has_data":true,"data":{"object_type":"Questionnaire","object_id":"q-001","source_version":1,"fixed_attributes":{"name":"Java 面试基础","subjectId":"subject-001"},"dynamic_attributes":{"subjectCount":1,"subject.s-001.title":"集合","subject.s-001.optionCount":1},"relation_count":2}}

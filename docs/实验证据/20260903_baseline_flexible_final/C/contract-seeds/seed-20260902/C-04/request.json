@@ -1,0 +1,1 @@
+{"trace_id":"trace-C-04","capability":"questionnaire-query","scenario":"invalid","request_shape":"subject_id=!invalid","arguments":{"subject_id":"!invalid"}}

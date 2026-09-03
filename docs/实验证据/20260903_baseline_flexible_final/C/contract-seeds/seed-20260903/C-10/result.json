@@ -1,0 +1,1 @@
+{"case_id":"C-10","capability":"linkage-config-query","scenario":"null","request_shape":"questionnaire_id=null","expected_behavior":"NOT_FOUND","raw_status":"NOT_FOUND","actual_behavior":"NOT_FOUND","trace_id":"trace-C-10","passed":true,"data_identity":"ENGINE_EXPERIMENT_RESULT"}
