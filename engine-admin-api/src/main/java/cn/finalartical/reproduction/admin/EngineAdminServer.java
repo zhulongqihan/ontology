@@ -21,16 +21,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.ConcurrentModificationException;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class EngineAdminServer {
     private final HttpServer server;
     private final EngineAdminService service;
+    private final ExecutorService executor;
     private final ObjectMapper mapper;
 
-    private EngineAdminServer(HttpServer server, EngineAdminService service) {
+    private EngineAdminServer(HttpServer server, EngineAdminService service, ExecutorService executor) {
         this.server = server;
         this.service = service;
+        this.executor = executor;
         this.mapper = new ObjectMapper();
     }
 
@@ -44,9 +47,10 @@ public final class EngineAdminServer {
         }
         EngineAdminService service = new EngineAdminService(repository);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
-        EngineAdminServer adminServer = new EngineAdminServer(server, service);
+        ExecutorService executor = Executors.newCachedThreadPool();
+        EngineAdminServer adminServer = new EngineAdminServer(server, service, executor);
         server.createContext("/api", adminServer.new ApiHandler());
-        server.setExecutor(Executors.newCachedThreadPool());
+        server.setExecutor(executor);
         server.start();
         return adminServer;
     }
@@ -61,6 +65,7 @@ public final class EngineAdminServer {
 
     public void stop() {
         server.stop(0);
+        executor.shutdownNow();
     }
 
     private final class ApiHandler implements HttpHandler {
