@@ -1,5 +1,5 @@
 {
-  "id" : "run-76b596e5",
+  "id" : "run-8c515020",
   "modelId" : "assessment-session",
   "executionMode" : "FLEXIBLE_ENGINE",
   "comparisonId" : null,
@@ -19,10 +19,10 @@
   "event" : "publish",
   "fromState" : "DRAFT",
   "toState" : "PUBLISHED",
-  "traceId" : "trace-run-76b596e5",
-  "createdAt" : "2026-09-03T07:29:25.341861Z",
-  "durationNs" : 24885700,
-  "durationMs" : 24,
+  "traceId" : "trace-run-8c515020",
+  "createdAt" : "2026-09-03T08:25:30.881317400Z",
+  "durationNs" : 27449400,
+  "durationMs" : 27,
   "idempotencyKey" : null,
   "retryOfRunId" : null,
   "replayOfRunId" : null,
@@ -38,7 +38,7 @@
     "workflowVersion" : 2,
     "state" : "DRAFT",
     "status" : "CREATED",
-    "capturedAt" : "2026-09-03T07:29:25.341861Z",
+    "capturedAt" : "2026-09-03T08:25:30.881317400Z",
     "values" : { },
     "sha256" : "7c092b08f7ca00b9b94d35ca25ab1210f083ada706ce4cbf4268e1b0b551c3db"
   },
@@ -50,7 +50,7 @@
     "workflowVersion" : 2,
     "state" : "PUBLISHED",
     "status" : "PASSED",
-    "capturedAt" : "2026-09-03T07:29:25.353939500Z",
+    "capturedAt" : "2026-09-03T08:25:30.889912Z",
     "values" : {
       "name" : "实验问卷",
       "subjectId" : "s-001",
@@ -66,22 +66,22 @@
     "sha256" : "4efdfcaeb60715f689c45153dda85e2beb297077beded19c32ab5aa1a99c7b7c"
   },
   "trace" : {
-    "runId" : "run-76b596e5",
-    "traceId" : "trace-run-76b596e5",
-    "startedAt" : "2026-09-03T07:29:25.341861Z",
-    "endedAt" : "2026-09-03T07:29:25.356678Z",
-    "durationNs" : 24885700,
-    "durationMs" : 24,
+    "runId" : "run-8c515020",
+    "traceId" : "trace-run-8c515020",
+    "startedAt" : "2026-09-03T08:25:30.881317400Z",
+    "endedAt" : "2026-09-03T08:25:30.889912Z",
+    "durationNs" : 27449400,
+    "durationMs" : 27,
     "status" : "PASSED",
     "lifecycle" : "COMMITTED",
     "sealed" : true,
     "spans" : [ {
-      "spanId" : "span-4cb09487",
-      "traceId" : "trace-run-76b596e5",
+      "spanId" : "span-ea49702d",
+      "traceId" : "trace-run-8c515020",
       "name" : "request",
-      "startedAt" : "2026-09-03T07:29:25.341855300Z",
-      "endedAt" : "2026-09-03T07:29:25.341861Z",
-      "durationNs" : 5700,
+      "startedAt" : "2026-09-03T08:25:30.881311200Z",
+      "endedAt" : "2026-09-03T08:25:30.881317400Z",
+      "durationNs" : 6200,
       "durationMs" : 0,
       "status" : "OK",
       "attributes" : {
@@ -89,12 +89,12 @@
         "contextId" : "experiment-a"
       }
     }, {
-      "spanId" : "span-912f2a02",
-      "traceId" : "trace-run-76b596e5",
+      "spanId" : "span-ab2ac612",
+      "traceId" : "trace-run-8c515020",
       "name" : "validation",
-      "startedAt" : "2026-09-03T07:29:25.345085Z",
-      "endedAt" : "2026-09-03T07:29:25.345160900Z",
-      "durationNs" : 75900,
+      "startedAt" : "2026-09-03T08:25:30.886439800Z",
+      "endedAt" : "2026-09-03T08:25:30.886519600Z",
+      "durationNs" : 79800,
       "durationMs" : 0,
       "status" : "OK",
       "attributes" : {
@@ -104,12 +104,12 @@
         "schemaMigrationApplied" : "false"
       }
     }, {
-      "spanId" : "span-cab36a7e",
-      "traceId" : "trace-run-76b596e5",
+      "spanId" : "span-39c01c78",
+      "traceId" : "trace-run-8c515020",
       "name" : "workflow",
-      "startedAt" : "2026-09-03T07:29:25.345153700Z",
-      "endedAt" : "2026-09-03T07:29:25.345160900Z",
-      "durationNs" : 7200,
+      "startedAt" : "2026-09-03T08:25:30.886511800Z",
+      "endedAt" : "2026-09-03T08:25:30.886519600Z",
+      "durationNs" : 7800,
       "durationMs" : 0,
       "status" : "OK",
       "attributes" : {
@@ -118,12 +118,12 @@
         "toState" : "PUBLISHED"
       }
     }, {
-      "spanId" : "span-aa94b9d0",
-      "traceId" : "trace-run-76b596e5",
+      "spanId" : "span-a9c7fc4d",
+      "traceId" : "trace-run-8c515020",
       "name" : "ontology",
-      "startedAt" : "2026-09-03T07:29:25.349537800Z",
-      "endedAt" : "2026-09-03T07:29:25.349553700Z",
-      "durationNs" : 15900,
+      "startedAt" : "2026-09-03T08:25:30.887713Z",
+      "endedAt" : "2026-09-03T08:25:30.887720900Z",
+      "durationNs" : 7900,
       "durationMs" : 0,
       "status" : "OK",
       "attributes" : {
@@ -132,13 +132,13 @@
         "bindingSource" : "model.ontologyTypeId"
       }
     }, {
-      "spanId" : "span-526e3e7a",
-      "traceId" : "trace-run-76b596e5",
+      "spanId" : "span-6f159a83",
+      "traceId" : "trace-run-8c515020",
       "name" : "provider",
-      "startedAt" : "2026-09-03T07:29:25.349553700Z",
-      "endedAt" : "2026-09-03T07:29:25.351238200Z",
-      "durationNs" : 2238200,
-      "durationMs" : 2,
+      "startedAt" : "2026-09-03T08:25:30.887720900Z",
+      "endedAt" : "2026-09-03T08:25:30.889912Z",
+      "durationNs" : 3787000,
+      "durationMs" : 3,
       "status" : "OK",
       "attributes" : {
         "serviceId" : "ontology-assembler",
@@ -152,30 +152,30 @@
         "endpoint" : "local://ontology-assembler",
         "provider" : "LocalOntologyProvider",
         "version" : "v1",
-        "durationNs" : "2238200"
+        "durationNs" : "3787000"
       }
     }, {
-      "spanId" : "span-2daf555e",
-      "traceId" : "trace-run-76b596e5",
+      "spanId" : "span-2e43bb9f",
+      "traceId" : "trace-run-8c515020",
       "name" : "persistence",
-      "startedAt" : "2026-09-03T07:29:25.354467500Z",
-      "endedAt" : "2026-09-03T07:29:25.354482Z",
-      "durationNs" : 14500,
+      "startedAt" : "2026-09-03T08:25:30.889904600Z",
+      "endedAt" : "2026-09-03T08:25:30.889912Z",
+      "durationNs" : 7400,
       "durationMs" : 0,
       "status" : "COMMITTED",
       "attributes" : {
         "contextCommitted" : "true",
         "commitBoundary" : "repository.commit",
-        "commitObservedAt" : "2026-09-03T07:29:25.380783100Z",
+        "commitObservedAt" : "2026-09-03T08:25:30.920221500Z",
         "commitRevision" : "7"
       }
     }, {
-      "spanId" : "span-80547069",
-      "traceId" : "trace-run-76b596e5",
+      "spanId" : "span-0126ca69",
+      "traceId" : "trace-run-8c515020",
       "name" : "response",
-      "startedAt" : "2026-09-03T07:29:25.354477300Z",
-      "endedAt" : "2026-09-03T07:29:25.354482Z",
-      "durationNs" : 4700,
+      "startedAt" : "2026-09-03T08:25:30.889907900Z",
+      "endedAt" : "2026-09-03T08:25:30.889912Z",
+      "durationNs" : 4100,
       "durationMs" : 0,
       "status" : "PREPARED",
       "attributes" : {
