@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $bodyPath = Join-Path $PaperRoot 'chapter\正文.tex'
 $rootPath = Join-Path $PaperRoot '论文初稿.tex'
 $bibPath = Join-Path $PaperRoot 'references.bib'
-$reportPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'runs\reproduction-suite\latest\report.json'
+$reportPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs\实验证据\20260903_baseline_flexible_final\report.json'
 
 foreach ($path in @($bodyPath, $rootPath, $bibPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -64,6 +64,21 @@ if ($RequireExperiment) {
         -not $dynamic.baseline_configuration_hash_consistent -or
         -not $dynamic.flexible_configuration_hash_consistent) {
         throw 'baseline/flexible comparison result does not match the paper claim'
+    }
+    $invariantCulture = [System.Globalization.CultureInfo]::InvariantCulture
+    foreach ($caseSpec in @(
+        @{ key = 'questionnaire-basic'; label = '基础问卷'; baseline = 12; flexible = 12; improved = 0 },
+        @{ key = 'questionnaire-dynamic-field'; label = '动态字段'; baseline = 0; flexible = 12; improved = 12 },
+        @{ key = 'questionnaire-knowledge-graph'; label = '知识图谱'; baseline = 12; flexible = 12; improved = 0 }
+    )) {
+        $case = $report.D_baseline_flexible_comparison.cases.PSObject.Properties[$caseSpec.key].Value
+        $baselineP50 = ([long]$case.baseline_duration_ns.p50).ToString('N0', $invariantCulture)
+        $flexibleP50 = ([long]$case.flexible_duration_ns.p50).ToString('N0', $invariantCulture)
+        $deltaP50 = ([long]$case.duration_delta_ns.p50).ToString('N0', $invariantCulture)
+        $expectedRow = "$($caseSpec.label) & 12/12 & $($caseSpec.baseline)/12 & $($caseSpec.flexible)/12 & $($caseSpec.improved)/12 & $baselineP50 & $flexibleP50 & $deltaP50 \\"
+        if ($body.IndexOf($expectedRow, [StringComparison]::Ordinal) -lt 0) {
+            throw "paper D p50 row does not match experiment report: $($caseSpec.key)"
+        }
     }
 }
 
