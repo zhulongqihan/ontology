@@ -1078,6 +1078,47 @@ public class EngineAdminServiceTest {
         assertEquals("第一次请求", service.run(baseline.getId()).getInputValues().get("name"));
     }
 
+    @Test
+    public void comparisonHistoryIsDerivedFromPersistedRunsAndDetailKeepsEvidence() throws Exception {
+        Path path = Files.createTempDirectory("engine-comparison-history").resolve("state.json");
+        EngineAdminService service = new EngineAdminService(new JsonEngineStateRepository(path));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("comparisonId", "cmp-history-001");
+        payload.put("caseId", "questionnaire-history");
+        payload.put("modelId", "questionnaire");
+        payload.put("event", "publish");
+        payload.put("values", new LinkedHashMap<String, Object>() {{
+            put("name", "历史对比");
+            put("subjectId", "subject-history");
+        }});
+
+        Map<String, Object> result = service.executeComparison(payload);
+        RuntimeRun baseline = (RuntimeRun) result.get("baselineRun");
+        RuntimeRun flexible = (RuntimeRun) result.get("flexibleRun");
+
+        assertEquals(1, service.comparisons().size());
+        ComparisonSummary listItem = service.comparisons().get(0);
+        assertEquals("cmp-history-001", listItem.getComparisonId());
+        assertEquals("COMPLETE", listItem.getStatus());
+        assertTrue(listItem.isFormalPair());
+        assertTrue(listItem.isComparable());
+        assertTrue(listItem.isConfigurationDistinct());
+        assertTrue(listItem.isEvidenceComplete());
+        assertNull(listItem.getBaselineRun());
+        assertNull(listItem.getFlexibleRun());
+
+        ComparisonSummary detail = service.comparison("cmp-history-001");
+        assertEquals(baseline.getId(), detail.getBaselineRunId());
+        assertEquals(flexible.getId(), detail.getFlexibleRunId());
+        assertEquals(baseline.getId(), detail.getBaselineRun().getId());
+        assertEquals(flexible.getId(), detail.getFlexibleRun().getId());
+        assertEquals("UNCHANGED", detail.getOutcome());
+        assertTrue(detail.getIssues().isEmpty());
+
+        EngineAdminService reloaded = new EngineAdminService(new JsonEngineStateRepository(path));
+        assertEquals("COMPLETE", reloaded.comparison("cmp-history-001").getStatus());
+    }
+
     private static List<String> spanNames(RuntimeRun run) {
         List<String> names = new ArrayList<String>();
         for (TraceSpanRecord span : run.getTrace().getSpans()) {

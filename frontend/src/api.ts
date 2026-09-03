@@ -158,6 +158,30 @@ export interface ComparisonResult {
   flexibleRun: RuntimeRun
 }
 
+export interface ComparisonSummary {
+  comparisonId: string
+  caseId?: string | null
+  modelId?: string | null
+  event?: string | null
+  createdAt?: string | null
+  status: 'COMPLETE' | 'INCOMPLETE' | 'INVALID' | string
+  outcome: 'IMPROVED' | 'REGRESSED' | 'UNCHANGED' | 'DIFFERENT' | 'NOT_AVAILABLE' | string
+  formalPair: boolean
+  comparable: boolean
+  configurationDistinct: boolean
+  evidenceComplete: boolean
+  runCount: number
+  baselineRunId?: string | null
+  flexibleRunId?: string | null
+  baselineStatus?: string | null
+  flexibleStatus?: string | null
+  inputSha256?: string | null
+  durationDeltaNs: number
+  issues: string[]
+  baselineRun?: RuntimeRun | null
+  flexibleRun?: RuntimeRun | null
+}
+
 export interface AuditEvent {
   id: string
   action: string
@@ -250,6 +274,8 @@ export const engineApi = {
   ontologyTypes: () => request<OntologyType[]>('/api/ontology/types'),
   services: () => request<ServiceRegistration[]>('/api/services'),
   runs: () => request<RuntimeRun[]>('/api/runs'),
+  comparisons: () => request<ComparisonSummary[]>('/api/comparisons'),
+  comparison: (comparisonId: string) => request<ComparisonSummary>(`/api/comparisons/${encodeURIComponent(comparisonId)}`),
   run: (runId: string) => request<RuntimeRun>(`/api/runs/${encodeURIComponent(runId)}`),
   trace: (runId: string) => request<TraceRecord>(`/api/runs/${encodeURIComponent(runId)}/trace`),
   snapshots: (runId: string) => request<ExecutionSnapshot[]>(`/api/runs/${encodeURIComponent(runId)}/snapshots`),

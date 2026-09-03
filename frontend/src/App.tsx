@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { engineApi, type AuditEvent, type EngineField, type EngineModel, type EngineOverview, type EngineTransition, type ExecutionSnapshot, type FieldType, type IdempotencyRecord, type OntologyType, type RuntimeRun, type ServiceRegistration, type TraceRecord } from './api'
+import { engineApi, type AuditEvent, type ComparisonSummary, type EngineField, type EngineModel, type EngineOverview, type EngineTransition, type ExecutionSnapshot, type FieldType, type IdempotencyRecord, type OntologyType, type RuntimeRun, type ServiceRegistration, type TraceRecord } from './api'
 import { ComparisonView, ControlPlaneJourney, KnowledgeGraphView } from './ControlPlaneViews'
 
 type ViewKey = 'overview' | 'models' | 'schema' | 'workflow' | 'ontology' | 'graph' | 'services' | 'runtime' | 'evidence' | 'compare'
@@ -24,6 +24,7 @@ function App() {
   const [ontologyTypes, setOntologyTypes] = useState<OntologyType[]>([])
   const [services, setServices] = useState<ServiceRegistration[]>([])
   const [runs, setRuns] = useState<RuntimeRun[]>([])
+  const [comparisons, setComparisons] = useState<ComparisonSummary[]>([])
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
   const [idempotencyRecords, setIdempotencyRecords] = useState<IdempotencyRecord[]>([])
   const [selectedModelId, setSelectedModelId] = useState('interview-session')
@@ -35,12 +36,13 @@ function App() {
     setLoading(true)
     setError('')
     try {
-      const [nextOverview, nextModels, nextOntologyTypes, nextServices, nextRuns, nextAuditEvents, nextIdempotencyRecords] = await Promise.all([
+      const [nextOverview, nextModels, nextOntologyTypes, nextServices, nextRuns, nextComparisons, nextAuditEvents, nextIdempotencyRecords] = await Promise.all([
         engineApi.overview(),
         engineApi.models(),
         engineApi.ontologyTypes(),
         engineApi.services(),
         engineApi.runs(),
+        engineApi.comparisons(),
         engineApi.auditEvents(),
         engineApi.idempotencyRecords(),
       ])
@@ -49,6 +51,7 @@ function App() {
       setOntologyTypes(nextOntologyTypes)
       setServices(nextServices)
       setRuns(nextRuns)
+      setComparisons(nextComparisons)
       setAuditEvents(nextAuditEvents)
       setIdempotencyRecords(nextIdempotencyRecords)
     } catch (reason) {
@@ -140,7 +143,7 @@ function App() {
           {activeView === 'services' && <ServicesView services={services} onAdd={(payload) => afterMutation(() => engineApi.addService(payload), '服务已写入本地注册表')} />}
           {activeView === 'runtime' && selectedModel && <RuntimeView models={models} selectedModel={selectedModel} runs={runs} onExecute={async (payload) => { const run = await engineApi.execute(payload); await refresh(); showNotice('运行已完成，结果已持久化'); return run }} />}
           {activeView === 'evidence' && <EvidenceView runs={runs} models={models} auditEvents={auditEvents} idempotencyRecords={idempotencyRecords} onRetry={(runId) => afterMutation(() => engineApi.retry(runId), '已创建新的重试运行')} onReplay={(runId) => afterMutation(() => engineApi.replay(runId), '已创建隔离重放运行')} onRollback={(runId) => afterMutation(() => engineApi.rollback(runId), '已创建回滚运行')} onExport={downloadExport} />}
-          {activeView === 'compare' && <ComparisonView models={models} runs={runs} onExecuteComparison={async (payload) => { const result = await engineApi.executeComparison(payload); await refresh(); showNotice('基线与 Flexible Engine 已完成成对运行'); return result }} />}
+          {activeView === 'compare' && <ComparisonView models={models} runs={runs} comparisons={comparisons} onExecuteComparison={async (payload) => { const result = await engineApi.executeComparison(payload); await refresh(); showNotice('基线与 Flexible Engine 已完成成对运行'); return result }} />}
         </div>
       </main>
       {notice && <div className="toast" role="status">{notice}</div>}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { engineApi, type ComparisonResult, type EngineModel, type ExecutionSnapshot, type OntologyType, type RuntimeRun, type TraceRecord, type TraceSpan } from './api'
+import { engineApi, type ComparisonResult, type ComparisonSummary, type EngineModel, type ExecutionSnapshot, type OntologyType, type RuntimeRun, type TraceRecord, type TraceSpan } from './api'
 
 type ViewKey = 'overview' | 'models' | 'schema' | 'workflow' | 'ontology' | 'graph' | 'services' | 'runtime' | 'evidence' | 'compare'
 
@@ -67,7 +67,7 @@ export function KnowledgeGraphView({ types, runs }: { types: OntologyType[]; run
 
 type ComparisonPayload = { modelId: string; event: string; values: Record<string, unknown>; ontology?: unknown; comparisonId?: string; caseId?: string }
 
-export function ComparisonView({ models, runs, onExecuteComparison }: { models: EngineModel[]; runs: RuntimeRun[]; onExecuteComparison: (payload: ComparisonPayload) => Promise<ComparisonResult> }) {
+export function ComparisonView({ models, runs, comparisons, onExecuteComparison }: { models: EngineModel[]; runs: RuntimeRun[]; comparisons: ComparisonSummary[]; onExecuteComparison: (payload: ComparisonPayload) => Promise<ComparisonResult> }) {
   const initialBaseline = runs.find((run) => run.executionMode === 'RIGID_MAPPING_BASELINE')?.id ?? runs[1]?.id ?? ''
   const initialFlexible = runs.find((run) => run.executionMode === 'FLEXIBLE_ENGINE' && run.comparisonId)?.id ?? runs[0]?.id ?? ''
   const [baselineId, setBaselineId] = useState(initialBaseline)
@@ -76,6 +76,13 @@ export function ComparisonView({ models, runs, onExecuteComparison }: { models: 
   const [flexible, setFlexible] = useState<LoadedRun | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  function selectComparison(comparisonId: string) {
+    const selected = comparisons.find((comparison) => comparison.comparisonId === comparisonId)
+    if (!selected) return
+    setBaselineId(selected.baselineRunId ?? '')
+    setFlexibleId(selected.flexibleRunId ?? '')
+  }
 
   useEffect(() => {
     if (runs.length === 0) return
@@ -111,6 +118,7 @@ export function ComparisonView({ models, runs, onExecuteComparison }: { models: 
 
   return <>
     <PageIntro eyebrow="COMPARISON / BASELINE × FLEXIBLE" title="成对运行对比" description="由同一输入哈希约束的固定映射基线与 Flexible Engine 成对运行，展示状态结果、调用链、证据完整度、配置身份和真实知识图谱。" action={<span className="identity-badge live">REAL RUN EVIDENCE</span>} />
+    <section className="panel comparison-history"><PanelHeading kicker="PERSISTED COMPARISON SESSIONS" title={`${comparisons.length} 个对比会话`} action={<span className="history-source">来自 RuntimeRun.comparisonId · 只读派生</span>} />{comparisons.length === 0 ? <EmptyState title="暂无已保存的对比会话" description="执行一次正式配对后，会在这里留下可重新打开的基线、Flexible、Trace 和图谱入口。" /> : <div className="comparison-history-list">{comparisons.map((comparison) => <button type="button" className={`comparison-history-row ${comparison.baselineRunId === baselineId && comparison.flexibleRunId === flexibleId ? 'selected' : ''}`} key={comparison.comparisonId} onClick={() => selectComparison(comparison.comparisonId)}><span className={`history-status ${comparison.status.toLowerCase()}`} aria-hidden="true">{comparison.status === 'COMPLETE' ? '✓' : '!'}</span><span className="history-main"><strong>{comparison.comparisonId}</strong><small>{comparison.caseId ?? '未命名案例'} · {comparison.modelId ?? '未知模型'} · {comparison.event ?? '无事件'}</small></span><span className="history-outcome"><b>{comparison.outcome}</b><small>{comparison.baselineStatus ?? '—'} → {comparison.flexibleStatus ?? '—'}</small></span><span className="history-evidence"><code>{comparison.runCount} Runs</code><small>{comparison.evidenceComplete ? 'Evidence complete' : 'Evidence incomplete'}</small></span></button>)}</div>}</section>
     <section className="panel comparison-selector"><div><PanelHeading kicker="PAIR CONFIGURATION" title="执行或选择对比运行" /><p className="panel-description">推荐先执行一组新的正式对比。系统会分别创建固定基线和 Flexible Engine Run，并将 comparisonId、输入哈希、配置哈希和彼此 Run ID 写入持久化证据。</p><ComparisonLauncher models={models} onExecute={onExecuteComparison} onSelected={(result) => { setBaselineId(result.baselineRun.id); setFlexibleId(result.flexibleRun.id) }} /></div><div className="comparison-selects"><label>{formalPair ? '固定映射基线' : 'Run A · 参照记录'}<select value={baselineId} onChange={(event) => setBaselineId(event.target.value)}><option value="">选择 Run</option>{runs.map((run) => <option value={run.id} key={run.id}>{run.id} · {run.executionMode === 'RIGID_MAPPING_BASELINE' ? 'BASELINE' : run.status}</option>)}</select></label><span className="comparison-arrow">→</span><label>{formalPair ? 'Flexible Engine' : 'Run B · 待比较记录'}<select value={flexibleId} onChange={(event) => setFlexibleId(event.target.value)}><option value="">选择 Run</option>{runs.map((run) => <option value={run.id} key={run.id}>{run.id} · {run.executionMode === 'FLEXIBLE_ENGINE' ? 'FLEXIBLE' : run.status}</option>)}</select></label></div></section>
     {error && <div className="error-list comparison-error">! {error}</div>}
     {loading && <div className="panel comparison-loading"><span className="state-mark spinning">↻</span><strong>正在读取两次运行的证据…</strong></div>}

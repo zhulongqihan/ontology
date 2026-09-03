@@ -561,6 +561,169 @@ public final class EngineAdminService {
         return result;
     }
 
+    /**
+     * Returns comparison sessions derived from the persisted Run journal.
+     * There is deliberately no second comparison fact source: a session is
+     * valid only when its two Run records agree on their reciprocal links,
+     * model, event and input identity.
+     */
+    public synchronized List<ComparisonSummary> comparisons() {
+        Map<String, List<RuntimeRun>> grouped = groupedComparisons();
+        List<ComparisonSummary> result = new ArrayList<ComparisonSummary>();
+        for (List<RuntimeRun> group : grouped.values()) {
+            result.add(comparisonSummary(group, false));
+        }
+        return result;
+    }
+
+    public synchronized ComparisonSummary comparison(String comparisonId) {
+        if (isBlank(comparisonId)) {
+            throw new IllegalArgumentException("comparisonId must not be blank");
+        }
+        List<RuntimeRun> group = groupedComparisons().get(comparisonId);
+        if (group == null) {
+            throw new IllegalArgumentException("comparison not found: " + comparisonId);
+        }
+        return comparisonSummary(group, true);
+    }
+
+    private Map<String, List<RuntimeRun>> groupedComparisons() {
+        Map<String, List<RuntimeRun>> grouped = new LinkedHashMap<String, List<RuntimeRun>>();
+        for (RuntimeRun run : state.getRuns()) {
+            if (run == null || isBlank(run.getComparisonId())) {
+                continue;
+            }
+            List<RuntimeRun> group = grouped.get(run.getComparisonId());
+            if (group == null) {
+                group = new ArrayList<RuntimeRun>();
+                grouped.put(run.getComparisonId(), group);
+            }
+            group.add(run);
+        }
+        return grouped;
+    }
+
+    private ComparisonSummary comparisonSummary(List<RuntimeRun> group, boolean includeRuns) {
+        List<RuntimeRun> baselines = new ArrayList<RuntimeRun>();
+        List<RuntimeRun> flexibleRuns = new ArrayList<RuntimeRun>();
+        for (RuntimeRun run : group) {
+            if ("RIGID_MAPPING_BASELINE".equals(run.getExecutionMode())) {
+                baselines.add(run);
+            } else if ("FLEXIBLE_ENGINE".equals(run.getExecutionMode())) {
+                flexibleRuns.add(run);
+            }
+        }
+
+        RuntimeRun baseline = baselines.size() == 1 ? baselines.get(0) : null;
+        RuntimeRun flexible = flexibleRuns.size() == 1 ? flexibleRuns.get(0) : null;
+        List<String> issues = new ArrayList<String>();
+        if (baselines.size() != 1) {
+            issues.add("expected exactly one RIGID_MAPPING_BASELINE run, got " + baselines.size());
+        }
+        if (flexibleRuns.size() != 1) {
+            issues.add("expected exactly one FLEXIBLE_ENGINE run, got " + flexibleRuns.size());
+        }
+        if (group.size() != 2) {
+            issues.add("expected exactly two runs in a comparison session, got " + group.size());
+        }
+
+        boolean comparable = baseline != null && flexible != null
+                && equalsNullable(baseline.getModelId(), flexible.getModelId())
+                && equalsNullable(baseline.getEvent(), flexible.getEvent())
+                && !isBlank(baseline.getInputSha256())
+                && baseline.getInputSha256().equals(flexible.getInputSha256());
+        if (baseline != null && flexible != null && !comparable) {
+            issues.add("model, event or input hash is not identical");
+        }
+
+        boolean reciprocal = baseline != null && flexible != null
+                && equalsNullable(baseline.getPairedRunId(), flexible.getId())
+                && equalsNullable(flexible.getPairedRunId(), baseline.getId())
+                && equalsNullable(baseline.getComparisonId(), flexible.getComparisonId());
+        if (baseline != null && flexible != null && !reciprocal) {
+            issues.add("pairedRunId links are not reciprocal");
+        }
+        boolean configurationDistinct = baseline != null && flexible != null
+                && !isBlank(baseline.getConfigurationSha256())
+                && !isBlank(flexible.getConfigurationSha256())
+                && !baseline.getConfigurationSha256().equals(flexible.getConfigurationSha256());
+        if (baseline != null && flexible != null && !configurationDistinct) {
+            issues.add("configuration hashes are missing or identical");
+        }
+
+        boolean formalPair = baseline != null && flexible != null && comparable && reciprocal
+                && configurationDistinct && group.size() == 2;
+
+        boolean evidenceComplete = hasCompleteEvidence(baseline) && hasCompleteEvidence(flexible);
+        if (baseline != null && flexible != null && !evidenceComplete) {
+            issues.add("one or both runs do not have sealed Trace and before/after Snapshots");
+        }
+
+        ComparisonSummary summary = new ComparisonSummary();
+        summary.setComparisonId(group.get(0).getComparisonId());
+        summary.setCaseId(firstNonBlank(baseline == null ? null : baseline.getCaseId(),
+                flexible == null ? null : flexible.getCaseId()));
+        summary.setModelId(firstNonBlank(baseline == null ? null : baseline.getModelId(),
+                flexible == null ? null : flexible.getModelId()));
+        summary.setEvent(firstNonBlank(baseline == null ? null : baseline.getEvent(),
+                flexible == null ? null : flexible.getEvent()));
+        summary.setCreatedAt(earliestCreatedAt(group));
+        summary.setStatus(formalPair ? (evidenceComplete ? "COMPLETE" : "INCOMPLETE")
+                : (baseline == null || flexible == null ? "INCOMPLETE" : "INVALID"));
+        summary.setOutcome(outcome(baseline, flexible, formalPair));
+        summary.setFormalPair(formalPair);
+        summary.setComparable(comparable);
+        summary.setConfigurationDistinct(configurationDistinct);
+        summary.setEvidenceComplete(evidenceComplete);
+        summary.setRunCount(group.size());
+        summary.setBaselineRunId(baseline == null ? null : baseline.getId());
+        summary.setFlexibleRunId(flexible == null ? null : flexible.getId());
+        summary.setBaselineStatus(baseline == null ? null : baseline.getStatus());
+        summary.setFlexibleStatus(flexible == null ? null : flexible.getStatus());
+        summary.setInputSha256(baseline != null ? baseline.getInputSha256() : flexible == null ? null : flexible.getInputSha256());
+        summary.setDurationDeltaNs(baseline != null && flexible != null
+                ? flexible.getDurationNs() - baseline.getDurationNs() : 0L);
+        summary.setIssues(issues);
+        if (includeRuns) {
+            summary.setBaselineRun(copy(baseline, RuntimeRun.class));
+            summary.setFlexibleRun(copy(flexible, RuntimeRun.class));
+        }
+        return summary;
+    }
+
+    private static String outcome(RuntimeRun baseline, RuntimeRun flexible, boolean formalPair) {
+        if (!formalPair || baseline == null || flexible == null) {
+            return "NOT_AVAILABLE";
+        }
+        if ("FAILED".equals(baseline.getStatus()) && "PASSED".equals(flexible.getStatus())) {
+            return "IMPROVED";
+        }
+        if ("PASSED".equals(baseline.getStatus()) && "FAILED".equals(flexible.getStatus())) {
+            return "REGRESSED";
+        }
+        return equalsNullable(baseline.getStatus(), flexible.getStatus()) ? "UNCHANGED" : "DIFFERENT";
+    }
+
+    private static boolean hasCompleteEvidence(RuntimeRun run) {
+        return run != null && run.getBeforeSnapshot() != null && run.getAfterSnapshot() != null
+                && run.getTrace() != null && run.getTrace().isSealed()
+                && "COMMITTED".equals(run.getTrace().getLifecycle());
+    }
+
+    private static String earliestCreatedAt(List<RuntimeRun> group) {
+        String earliest = null;
+        for (RuntimeRun run : group) {
+            if (run.getCreatedAt() != null && (earliest == null || run.getCreatedAt().compareTo(earliest) < 0)) {
+                earliest = run.getCreatedAt();
+            }
+        }
+        return earliest;
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        return !isBlank(first) ? first : second;
+    }
+
     public synchronized RuntimeRun execute(Map<String, Object> payload) {
         return copy(runtimeService.execute(payload), RuntimeRun.class);
     }

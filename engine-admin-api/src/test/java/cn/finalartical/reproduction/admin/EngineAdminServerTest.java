@@ -135,6 +135,16 @@ public class EngineAdminServerTest {
             assertTrue(response.body.contains("pairedRunId"));
             assertTrue(response.body.contains("inputSha256"));
 
+            HttpResponse history = request(server, "GET", "/api/comparisons", null);
+            HttpResponse detail = request(server, "GET", "/api/comparisons/cmp-http-001", null);
+            assertEquals(200, history.status);
+            assertEquals(200, detail.status);
+            assertTrue(history.body.contains("COMPLETE"));
+            assertTrue(history.body.contains("baselineRunId"));
+            assertTrue(!history.body.contains("beforeSnapshot"));
+            assertTrue(detail.body.contains("beforeSnapshot"));
+            assertTrue(detail.body.contains("evidenceComplete"));
+
             values.put("name", "HTTP 对比冲突");
             HttpResponse conflict = request(server, "POST", "/api/comparisons/execute",
                     mapper.writeValueAsString(payload));
